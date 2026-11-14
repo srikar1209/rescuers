@@ -1,0 +1,21 @@
+name: rescuers
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - geopandas
+  - osmnx
+  - rasterio
+  - rioxarray
+  - py3dep
+  - pygeohydro
+  - matplotlib
+  - streamlit
+  - folium
+  - streamlit-folium
+  - pydeck
+  - pip
+  - pip:
+      - anthropic

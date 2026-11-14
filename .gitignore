@@ -1,0 +1,22 @@
+# Data files (large; regenerate with scripts/)
+data/*
+!data/README.md
+!data/demo_case.json
+
+# Outputs
+*.png
+*.tif
+*.graphml
+cache/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.key
+
+# Mac
+.DS_Store

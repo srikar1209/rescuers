@@ -1,0 +1,58 @@
+{
+  "case_name": "Walter (demo case, fictional)",
+  "person": {
+    "name": "Walter",
+    "age": 79,
+    "condition": "moderate dementia",
+    "notes": "Used to live in North Amherst. Has wandered before."
+  },
+  "start": {
+    "label": "Maple Grove Care Home (fictional), University Drive",
+    "lat": 42.37023,
+    "lon": -72.53007,
+    "last_seen_time": "18:30"
+  },
+  "reported_missing_time": "19:15",
+  "weather": {"temp_c": 4, "note": "dark by 19:00"},
+  "clues": [
+    {
+      "id": 1,
+      "entered_at": "19:30",
+      "text": "A driver saw an old man walking west near University Drive around 6:45 pm.",
+      "type": "sighting",
+      "lat": 42.37094,
+      "lon": -72.53466,
+      "time": "18:45"
+    },
+    {
+      "id": 2,
+      "entered_at": "20:00",
+      "text": "ATM camera checked for 6:30 to 7:30 pm. No one matching was seen.",
+      "type": "camera_negative",
+      "lat": 42.37198,
+      "lon": -72.53340,
+      "window": ["18:30", "19:30"]
+    },
+    {
+      "id": 3,
+      "entered_at": "21:00",
+      "text": "The cemetery to the west was searched. Nothing found.",
+      "type": "area_searched",
+      "lat": 42.37266,
+      "lon": -72.55031,
+      "radius_m": 150
+    }
+  ],
+  "decoy": {
+    "label": "Cemetery (about 1.7 km west)",
+    "lat": 42.37266,
+    "lon": -72.55031
+  },
+  "hidden_truth": {
+    "label": "Bush behind storage facility (about 0.65 km west)",
+    "lat": 42.37095,
+    "lon": -72.53796,
+    "arrival_time": "18:55",
+    "note": "Do NOT give this to the model. Use only for the final reveal and scoring."
+  }
+}
