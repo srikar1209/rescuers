@@ -13,7 +13,10 @@
     "last_seen_time": "18:30"
   },
   "reported_missing_time": "19:15",
-  "weather": {"temp_c": 4, "note": "dark by 19:00"},
+  "weather": {
+    "temp_c": 4,
+    "note": "dark by 19:00"
+  },
   "clues": [
     {
       "id": 1,
@@ -30,8 +33,11 @@
       "text": "ATM camera checked for 6:30 to 7:30 pm. No one matching was seen.",
       "type": "camera_negative",
       "lat": 42.37198,
-      "lon": -72.53340,
-      "window": ["18:30", "19:30"]
+      "lon": -72.5334,
+      "window": [
+        "18:30",
+        "19:30"
+      ]
     },
     {
       "id": 3,
@@ -49,9 +55,9 @@
     "lon": -72.55031
   },
   "hidden_truth": {
-    "label": "Bush behind storage facility (about 0.65 km west)",
-    "lat": 42.37095,
-    "lon": -72.53796,
+    "label": "Wooded wetland behind a storage facility (about 0.68 km west, 12 m downhill)",
+    "lat": 42.37091,
+    "lon": -72.53824,
     "arrival_time": "18:55",
     "note": "Do NOT give this to the model. Use only for the final reveal and scoring."
   }
