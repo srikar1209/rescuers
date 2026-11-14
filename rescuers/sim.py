@@ -33,15 +33,19 @@ class Params:
     speed_sd: float = 0.23
     speed_min: float = 0.25
     speed_max: float = 1.10
-    # downhill preference (EXPERT, tuned to 42 / 39 / 19 %)
-    downhill: float = 0.30
+    # slope choice (EXPERT: "path of least resistance"; tuned to 42 / 39 / 19 %).
+    # Two separate knobs, so walkers can avoid climbing without rushing downhill.
+    down_pref: float = 0.30    # a downhill step is (1 + down_pref) times more likely
+    up_avoid: float = 0.30     # an uphill step is (1 - up_avoid) times as likely
     # roads (DATA, per person: 66% cross or leave roads, so 34% stay on them = Koester's
     # "route traveling"). Each walker decides once, at the first road it meets.
     p_cross_road: float = 0.66
     road_stick: float = 8.0    # how strongly road followers prefer road cells (ASSUMPTION, tuned)
     # stopping (EXPERT + ASSUMPTION, tuned to ISRID find locations)
     p_struct: float = 0.30     # stop when blocked by a building
-    p_water: float = 0.80      # stop on entering a river, pond or lake (EXPERT, tuned)
+    # Rivers, ponds, lakes: each person decides ONCE, at the first water they reach: go in
+    # (and stop there) with chance p_water, or treat water as a wall for the rest of the walk.
+    p_water: float = 0.80      # (EXPERT, tuned)
     p_stream: float = 0.05     # stop on entering a small stream or ditch (crossable; tuned)
     water_attract: float = 1.5 # how much more likely a step toward water is (EXPERT, tuned)
     # per 10 m step; small because it compounds: 0.005 per step = about 40% stuck within 1 km
@@ -52,24 +56,60 @@ class Params:
     drain_tpi: float = -1.0    # meters below neighborhood = drainage
     max_slope: float = 30.0    # degrees; steeper = blocked (ASSUMPTION)
     goal_radius_m: float = 30.0
-    struct_min_m: float = 50.0 # no "stopped at building" while still leaving home (ASSUMPTION)
-    # ISRID's mobility sample (n = 42, median 15 min) is too short to produce ISRID's distances
-    # (n = 175, median 1.0 km). We keep the SHAPE of the mobility data and stretch it by this
-    # factor, tuned so distances match. ASSUMPTION, reported openly.
-    mobility_scale: float = 1.0
+    struct_min_m: float = 50.0 # no "stopped at building" this close to home (ASSUMPTION, tuned)
+    # Direction walkers go AROUND obstacles: after a bounce they turn back toward their
+    # original direction by up to this many degrees per step (EXPERT: direction traveling
+    # = keep the same course until truly stuck; number tuned). 0 = never turn back.
+    return_deg: float = 10.0
+    # Seen by the public: chance per minute of being spotted (and found) while on a road or
+    # path, times the road's traffic (0 to 1, from the road type). Explains ISRID's road and
+    # linear finds. ASSUMPTION, tuned. In the app it becomes the "not reported" clue instead.
+    p_spot: float = 0.02
+    # Walking time before the person stops moving (lognormal). ISRID has two samples that
+    # disagree: mobility hours (n = 42) are far more spread out than distances (n = 175).
+    # We trust the larger sample: these two knobs are tuned so distances match ISRID.
+    # The n = 42 mobility hours are kept below as a check, not as an input. ASSUMPTION.
+    walk_median_min: float = 90.0   # median walking time, minutes
+    walk_sigma: float = 1.2         # spread (SD of log time)
 
 
 # ISRID temperate dementia mobility (hours) at percentiles 25/50/75/95 (DATA, n = 42).
-# 0 h at the 25th percentile is treated as "about 2 minutes" so a log curve can be used.
+# Used only as a CHECK now (see walk_median_min). 0 h is treated as "about 2 minutes".
 MOBILITY_P = np.array([0.00, 0.25, 0.50, 0.75, 0.95, 1.00])
 MOBILITY_H = np.array([0.005, 0.033, 0.25, 3.8, 18.0, 24.0])
 
 # Stop reasons
-ACTIVE, STUCK, STRUCTURE, IN_WATER, TIRED, GOAL, LEFT_MAP, OUT_OF_TIME = range(8)
+ACTIVE, STUCK, STRUCTURE, IN_WATER, TIRED, GOAL, LEFT_MAP, OUT_OF_TIME, SPOTTED = range(9)
 REASONS = ["active", "stuck in terrain", "stopped at building", "in water",
-           "mobility time over", "reached goal", "left map", "simulation time over"]
+           "mobility time over", "reached goal", "left map", "simulation time over",
+           "spotted by public"]
 
 BLOCKED = {G.BUILDING, G.BARRIER, G.OUTSIDE}
+
+# "Same elevation" band for the downhill / same / uphill statistic. 2 m is inside normal noise of a
+# 10 m elevation map plus small bumps; 5 m is a meaningful change. ASSUMPTION (ISRID gives no band).
+ELEV_SAME_M = 5.0
+
+# Drainage = low ground (tpi < drain_tpi) that is ALSO within this distance of a stream, ditch,
+# river or pond: creek beds, ditches, ravines (ISRID's meaning). ASSUMPTION.
+DRAIN_STREAM_M = 50.0
+
+
+def traffic_layer(grid):
+    """Road traffic 0-1. Old grids without the layer: roads 0.3, paths 0.1 (rough fallback)."""
+    if "traffic" not in grid:
+        cls = grid["cls"]
+        grid["traffic"] = np.where(cls == G.ROAD, 0.3, np.where(cls == G.PATH, 0.1, 0.0)).astype("float32")
+    return grid["traffic"]
+
+
+def drainage_mask(grid, drain_tpi):
+    """True where a cell counts as drainage. The near-stream part is computed once per grid."""
+    if "near_stream" not in grid:
+        from scipy import ndimage
+        d = ndimage.distance_transform_edt(~np.isin(grid["cls"], [G.STREAM, G.WATER])) * float(grid["cell"])
+        grid["near_stream"] = d <= DRAIN_STREAM_M
+    return (grid["tpi"] < drain_tpi) & grid["near_stream"]
 
 
 @dataclass
@@ -84,6 +124,7 @@ class Walks:
     minutes: int
     start: tuple
     params: dict = field(default_factory=dict)
+    bounces: np.ndarray = None  # (n,) times the walker was fully blocked and turned (diagnostics)
 
 
 PARAMS_FILE = "data/calibrated_params.json"
@@ -93,6 +134,8 @@ def load_params(path=PARAMS_FILE, verbose=True):
     """Calibrated parameters if calibrate.py has been run, else the defaults."""
     try:
         d = json.load(open(path))
+        if "downhill" in d and "down_pref" not in d:     # older files had one slope knob
+            d["down_pref"] = d["up_avoid"] = d["downhill"]
         if verbose:
             print(f"Using calibrated parameters from {path}")
         return Params(**{k: v for k, v in d.items() if k in Params.__dataclass_fields__})
@@ -102,24 +145,34 @@ def load_params(path=PARAMS_FILE, verbose=True):
         return Params()
 
 
+def sample_walk_minutes(rng, n, p):
+    """Lognormal walking time in minutes (see Params.walk_median_min)."""
+    return np.exp(np.log(p.walk_median_min) + p.walk_sigma * rng.standard_normal(n))
+
+
 def sample_mobility_minutes(rng, n):
+    """ISRID mobility hours (n = 42) as minutes. Not used by simulate(); kept for comparison."""
     u = rng.random(n)
     log_h = np.interp(u, MOBILITY_P, np.log(MOBILITY_H))
     return np.exp(log_h) * 60.0
 
 
 def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
-             heading_sd=30.0, goal=None, seed=42):
+             heading_sd=30.0, goal=None, seed=42, spotting=True):
     """
     grid     from grid.load()
     start    (row, col) of the last seen point
     heading  known exit direction in degrees (0 = north, 90 = east), or None for random
     goal     (row, col) of a former home or favorite place, or None
+    spotting True for calibration (people seen on roads are found there). The app uses False,
+             because the person is still missing; it applies the "not_reported" clue instead.
     """
     p = params or Params()
     rng = np.random.default_rng(seed)
     cls, spd_f, dem, slope, tpi = grid["cls"], grid["speed"], grid["dem"], grid["slope"], grid["tpi"]
     dem = np.where(np.isnan(dem), np.nanmean(dem), dem)
+    drain = drainage_mask(grid, p.drain_tpi)
+    traffic = traffic_layer(grid)
     H, W = cls.shape
     cell = float(grid["cell"])
 
@@ -128,7 +181,7 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
     shares = shares / shares.sum()
     kind = rng.choice(3, size=n, p=shares)
     speed = np.clip(rng.normal(p.speed_mean, p.speed_sd, n), p.speed_min, p.speed_max)
-    mobility_s = sample_mobility_minutes(rng, n) * 60.0 * p.mobility_scale
+    mobility_s = sample_walk_minutes(rng, n, p) * 60.0
     if heading is None:
         head = rng.uniform(0, 360, n)
     else:
@@ -141,11 +194,13 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
     t = np.zeros(n)
     reason = np.zeros(n, dtype=np.int8)
     road_mode = np.zeros(n, dtype=np.int8)        # 0 no road yet, 1 crosser, 2 road follower
+    water_mode = np.zeros(n, dtype=np.int8)       # 0 no water yet, 1 goes in, 2 avoids water
     on_road_prev = np.isin(cls[start], [G.ROAD, G.PATH]).repeat(n)
     T = minutes
     rec = np.zeros((n, T + 1, 2), dtype=np.float32)
     rec[:, 0] = pos
     last_min = np.zeros(n, dtype=int)
+    bounces = np.zeros(n, dtype=np.int32)
     t_max = minutes * 60.0
 
     offsets = np.radians(np.array([-45.0, 0.0, 45.0]))
@@ -186,8 +241,8 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         # 3. weight candidates
         w = np.tile(base_w, (m, 1))
         dz = dem[ri_c, ci_c] - dem[r0, c0][:, None]
-        w = np.where(dz < -0.2, w * (1 + p.downhill), w)
-        w = np.where(dz > 0.2, w * (1 - p.downhill), w)
+        w = np.where(dz < -0.2, w * (1 + p.down_pref), w)
+        w = np.where(dz > 0.2, w * (1 - p.up_avoid), w)
         # drawn to water, but only from dry land (no wading along streams)
         on_land = ~np.isin(cls[r0, c0], [G.WATER, G.STREAM])[:, None]
         w = np.where(((k == G.WATER) | (k == G.STREAM)) & on_land, w * p.water_attract, w)
@@ -196,9 +251,12 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
             road_c = np.isin(k, [G.ROAD, G.PATH])
             w[fol] = np.where(road_c[fol], w[fol] * p.road_stick, w[fol])
         blocked = np.isin(k, list(BLOCKED)) | (slope[ri_c, ci_c] > p.max_slope)
-        # rivers and ponds: this step the walker either goes in and stops there (p_water),
-        # or treats the water as a barrier. No wading across a pond.
-        enters_water = (rng.random(m) < p.p_water)[:, None]
+        # rivers and ponds: decided once per person, at the first water they reach.
+        # 1 = will go in (and stop there), 2 = treats water as a wall. No wading across.
+        meets = (k == G.WATER).any(1) & (water_mode[act] == 0)
+        if meets.any():
+            water_mode[act[meets]] = np.where(rng.random(meets.sum()) < p.p_water, 1, 2)
+        enters_water = (water_mode[act] == 1)[:, None]
         blocked |= (k == G.WATER) & ~enters_water
         w = np.where(blocked, 0.0, w)
 
@@ -206,6 +264,7 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         dead = w.sum(1) == 0
         if dead.any():
             ia = act[dead]
+            bounces[ia] += 1
             out_any = (k[dead] == G.OUTSIDE).any(1)
             bld_any = (k[dead] == G.BUILDING).any(1)
             left_home = np.hypot(pos[ia, 0] - start[0], pos[ia, 1] - start[1]) * cell >= p.struct_min_m
@@ -235,7 +294,8 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         tobler = np.exp(-3.5 * np.abs(s + 0.05)) / np.exp(-3.5 * 0.05)
         terr = np.maximum(spd_f[nr, nc], 0.3)                       # wading through water is slow
         v = speed[ia] * terr * np.clip(tobler, 0.2, 1.2)
-        t[ia] += step_m / v
+        dt = step_m / v
+        t[ia] += dt
 
         pos[ia, 0], pos[ia, 1] = npos_r, npos_c
         # Direction walkers: wobble shakes each step but does NOT add up, so they hold their
@@ -253,6 +313,12 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         # road followers on a road turn with it (heading = the step they just took)
         turn = on_road & (road_mode[ia] == 2)
         head[ia[turn]] = np.degrees(ang[mv][idx, choice])[turn] % 360
+        # direction walkers (not road followers) turn back toward their original course
+        back = (kind[ia] == 0) & (road_mode[ia] != 2)
+        if back.any() and p.return_deg > 0:
+            j = ia[back]
+            diff = (heading0[j] - head[j] + 180) % 360 - 180
+            head[j] = (head[j] + np.clip(diff, -p.return_deg, p.return_deg)) % 360
         on_road_prev[ia] = on_road
 
         # 7. terrain stops
@@ -260,11 +326,15 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         stuck = ((nk == G.BRUSH) & (u < p.p_brush)) | \
                 ((nk == G.WOODS) & (u < p.p_woods)) | \
                 ((nk == G.WETLAND) & (u < p.p_wet)) | \
-                ((tpi[nr, nc] < p.drain_tpi) & ~on_road & (u < p.p_drain))
+                (drain[nr, nc] & ~on_road & (u < p.p_drain))
         u2 = rng.random(ia.size)
         water = (nk == G.WATER) | ((nk == G.STREAM) & (u2 < p.p_stream))
         reason[ia[stuck]] = STUCK
         reason[ia[water]] = IN_WATER
+        if spotting and p.p_spot > 0:
+            rate = np.clip(p.p_spot * traffic[nr, nc], 0, 0.999)
+            seen = on_road & (rng.random(ia.size) < 1 - (1 - rate) ** (dt / 60.0))
+            reason[ia[seen & (reason[ia] == ACTIVE)]] = SPOTTED
         if goal_rc is not None:
             at_goal = (kind[ia] == 2) & (np.hypot(nr - goal_rc[0], nc - goal_rc[1]) < goal_cells)
             reason[ia[at_goal & (reason[ia] == ACTIVE)]] = GOAL
@@ -292,7 +362,7 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
 
     return Walks(pos=rec, end=np.rint(pos).astype(int), reason=reason, kind=kind,
                  speed=speed, mobility_min=mobility_s / 60, heading0=heading0,
-                 minutes=minutes, start=tuple(start), params=asdict(p))
+                 minutes=minutes, start=tuple(start), params=asdict(p), bounces=bounces)
 
 
 # ---------------- statistics vs ISRID ----------------
@@ -317,7 +387,7 @@ def find_type(grid, walks, p=None):
     # Amherst wetland is mostly WOODED wetland (NLCD 90), which a search team would usually
     # record as woods. Counted as woods unless it is low ground (then drainage). Judgment call.
     out[np.isin(k, [G.WETLAND])] = "woods"
-    out[grid["tpi"][r, c] < p.drain_tpi] = "drainage"
+    out[drainage_mask(grid, p.drain_tpi)[r, c]] = "drainage"
     out[np.isin(k, [G.WATER, G.STREAM])] = "water"
     out[np.isin(k, [G.PATH])] = "linear"
     out[np.isin(k, [G.ROAD])] = "road"
@@ -342,8 +412,8 @@ def stats(grid, walks):
         **{f: (ft == f).mean() * 100 for f in FIND_TYPES},
         "track_offset_m_p50": np.median(grid["dist_road"][walks.end[:, 0], walks.end[:, 1]]),
         "dispersion_deg_p50": np.median(disp) if disp.size else np.nan,
-        "downhill": (dz < -2).mean() * 100, "same": (np.abs(dz) <= 2).mean() * 100,
-        "uphill": (dz > 2).mean() * 100,
+        "downhill": (dz < -ELEV_SAME_M).mean() * 100, "same": (np.abs(dz) <= ELEV_SAME_M).mean() * 100,
+        "uphill": (dz > ELEV_SAME_M).mean() * 100,
     }
     return out
 

@@ -1,6 +1,6 @@
 """
 Calibration: tune the ASSUMPTION knobs until the model reproduces ISRID statistics.
-DATA values (speed, mobility shape, 66% road crossing) are never tuned.
+DATA values (speed, 66% road crossing) are never tuned.
 
 Run from the repo root:   python -m rescuers.calibrate
 Takes about 5 to 15 minutes. Output:
@@ -24,9 +24,10 @@ KNOBS = {  # name: (low, high)
     "share_direction": (0.40, 0.95),
     "share_random":    (0.10, 0.45),
     "wobble_direction": (5.0, 25.0),
-    "downhill":        (0.0, 0.6),
+    "down_pref":       (0.0, 0.8),       # prefer downhill steps
+    "up_avoid":        (0.0, 0.9),       # avoid uphill steps
     "p_struct":        (0.005, 0.40),
-    "p_water":         (0.02, 0.95),   # rivers, ponds, lakes: chance to go in (and stop)
+    "p_water":         (0.01, 0.95),   # rivers, ponds, lakes: chance to go in (and stop)
     "p_stream":        (0.0003, 0.30), # small streams and ditches (crossable)
     "water_attract":   (1.0, 2.0),
     "p_wet":           (0.0002, 0.03),
@@ -34,9 +35,14 @@ KNOBS = {  # name: (low, high)
     "p_woods":         (0.00005, 0.006),
     "p_drain":         (0.0001, 0.015),
     "road_stick":      (1.5, 40.0),      # how strongly road followers stay on roads
-    "mobility_scale":  (1.0, 20.0),
+    "drain_tpi":       (-3.0, -0.5),     # m below the neighborhood that counts as low ground
+    "struct_min_m":    (50.0, 800.0),    # no building stop closer than this to home
+    "return_deg":      (0.0, 30.0),      # how fast direction walkers turn back after an obstacle
+    "p_spot":          (0.0005, 0.3),    # chance per minute of being seen on a busy road
+    "walk_median_min": (20.0, 400.0),    # median walking time, minutes
+    "walk_sigma":      (0.4, 2.5),       # spread of walking time
 }
-LOG_KNOBS = {"p_wet", "p_brush", "p_woods", "p_drain", "p_struct", "p_stream", "p_water", "mobility_scale",
+LOG_KNOBS = {"p_wet", "p_brush", "p_woods", "p_drain", "p_struct", "p_stream", "p_water", "walk_median_min", "p_spot",
              "road_stick"}
 # share_goal is not tuned: it only matters when a case has a goal, and calibration starts have none.
 
@@ -45,9 +51,8 @@ LOG_KNOBS = {"p_wet", "p_brush", "p_woods", "p_drain", "p_struct", "p_stream", "
 WEIGHTS = {
     "dist_km_p25": 1.0, "dist_km_p50": 3.0, "dist_km_p75": 2.0,
     "structure": 1.0, "woods": 1.0, "field": 1.0, "linear": 0.5,
-    # Low weight: many ISRID "road" finds are people SPOTTED by drivers while walking.
-    # The model records where walkers stop and does not model public sightings.
-    "road": 0.25,
+    # Road finds now include people SPOTTED by the public (p_spot), so road gets full weight.
+    "road": 1.0,
     "drainage": 1.0, "water": 1.5,
     "brush": 0.25,   # brush is only 0.2% of the Amherst map, so 6% cannot be reached
     "track_offset_m_p50": 0.5, "dispersion_deg_p50": 0.25,   # only 11 cases
@@ -57,7 +62,7 @@ SHARE_KEYS = set(sim.FIND_TYPES) | {"downhill", "same", "uphill"}
 
 N_STARTS = 20
 WALKERS_PER_START = 400
-MINUTES = 360   # long enough that few walkers are cut off mid-walk
+MINUTES = 720   # 12 h: long walkers are not cut off mid-walk (demo uses 4 h)
 
 _GRID = None
 
@@ -89,7 +94,7 @@ def measure(params_dict, starts, n=WALKERS_PER_START, seed=1):
     p = sim.Params(**params_dict)
     cell = float(grid["cell"])
     dem = np.where(np.isnan(grid["dem"]), np.nanmean(grid["dem"]), grid["dem"])
-    dist, ftypes, offset, disp, dz, reasons = [], [], [], [], [], []
+    dist, ftypes, offset, disp, dz, reasons, endcls = [], [], [], [], [], [], []
     for i, s in enumerate(starts):
         w = sim.simulate(grid, s, n=n, params=p, minutes=MINUTES, seed=seed + i)
         d = np.hypot(*(w.end - np.array(s)).T) * cell / 1000
@@ -102,18 +107,24 @@ def measure(params_dict, starts, n=WALKERS_PER_START, seed=1):
         disp.append(np.abs((bearing - w.heading0 + 180) % 360 - 180)[moved])
         dz.append(dem[w.end[:, 0], w.end[:, 1]] - dem[s])
         reasons.append(w.reason)
+        endcls.append(grid["cls"][w.end[:, 0], w.end[:, 1]])
     dist, ftypes = np.concatenate(dist), np.concatenate(ftypes)
     offset, disp, dz = np.concatenate(offset), np.concatenate(disp), np.concatenate(dz)
     reasons = np.concatenate(reasons)
+    endcls = np.concatenate(endcls)
     out = {
         "dist_km_p25": np.percentile(dist, 25), "dist_km_p50": np.percentile(dist, 50),
         "dist_km_p75": np.percentile(dist, 75),
         **{f: (ftypes == f).mean() * 100 for f in sim.FIND_TYPES},
         "track_offset_m_p50": float(np.median(offset)),
         "dispersion_deg_p50": float(np.median(disp)) if disp.size else 0.0,
-        "downhill": (dz < -2).mean() * 100, "same": (np.abs(dz) <= 2).mean() * 100,
-        "uphill": (dz > 2).mean() * 100,
+        "downhill": (dz < -sim.ELEV_SAME_M).mean() * 100,
+        "same": (np.abs(dz) <= sim.ELEV_SAME_M).mean() * 100,
+        "uphill": (dz > sim.ELEV_SAME_M).mean() * 100,
         **{f"stop: {name}": (reasons == i).mean() * 100 for i, name in enumerate(sim.REASONS) if i},
+        # where the "woods" finds come from (forest vs wooded wetland), for the report
+        "woods_from: forest": ((ftypes == "woods") & (endcls == G.WOODS)).mean() * 100,
+        "woods_from: wetland": ((ftypes == "woods") & (endcls == G.WETLAND)).mean() * 100,
     }
     return {k: float(v) for k, v in out.items()}
 
@@ -156,7 +167,57 @@ def _job(args):
     return d, st, score(st)
 
 
-def search(grid, starts, rounds=(200, 120, 80), keep=15, seed=0, workers=None):
+# Best setting from the run before the 3 rule fixes (score 5.54), translated to the new rules:
+# return_deg = 0 and struct_min_m = 50 reproduce the old movement. Used as a warm start.
+PREV_BEST = dict(share_direction=0.8593, share_random=0.1563, wobble_direction=6.09, down_pref=0.3407, up_avoid=0.3407,
+                 p_struct=0.1307, p_water=0.0201, p_stream=0.001237, water_attract=1.132,
+                 p_wet=0.001488, p_brush=0.01939, p_woods=0.0004995, p_drain=0.0002854,
+                 road_stick=3.198, drain_tpi=-1.0, struct_min_m=50.0, return_deg=0.0,
+                 walk_median_min=130.0, walk_sigma=1.974)
+
+
+def search(grid, starts, trials=400, seed=0, workers=None):
+    """
+    Bayesian optimization (Optuna TPE): learns which knob regions score well and samples
+    there more. Falls back to random search if optuna is not installed.
+    """
+    try:
+        import optuna
+    except ImportError:
+        print("optuna not installed (pip install optuna); using random search.")
+        return search_random(grid, starts, seed=seed, workers=workers)
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    workers = workers or max(1, (os.cpu_count() or 2) - 1)
+    base = asdict(sim.Params())
+    study = optuna.create_study(direction="minimize",
+                                sampler=optuna.samplers.TPESampler(seed=seed, multivariate=True,
+                                                                   n_startup_trials=60))
+    def clip(d):
+        return {k: float(min(max(d.get(k, base[k]), lo), hi)) for k, (lo, hi) in KNOBS.items()}
+    for warm in (asdict(sim.load_params(verbose=False)), PREV_BEST, base):
+        study.enqueue_trial(clip(warm))
+    results, t0, done = [], time.time(), 0
+    with ProcessPoolExecutor(max_workers=workers, initializer=_init, initargs=(grid,)) as ex:
+        while done < trials:
+            batch = [study.ask() for _ in range(min(workers, trials - done))]
+            jobs = []
+            for tr in batch:
+                d = dict(base)
+                for k, (lo, hi) in KNOBS.items():
+                    d[k] = tr.suggest_float(k, lo, hi, log=k in LOG_KNOBS and lo > 0)
+                jobs.append((d, starts))
+            for tr, out in zip(batch, ex.map(_job, jobs)):
+                study.tell(tr, out[2])
+                results.append(out)
+            done += len(batch)
+            if done % 50 < len(batch) or done >= trials:
+                best = min(r[2] for r in results)
+                print(f"  {done}/{trials} settings, {time.time() - t0:.0f} s. Best score {best:.2f}")
+    results.sort(key=lambda x: x[2])
+    return results
+
+
+def search_random(grid, starts, rounds=(200, 120, 80), keep=15, seed=0, workers=None):
     rng = np.random.default_rng(seed)
     base = sim.Params()
     ranges = dict(KNOBS)
@@ -205,9 +266,14 @@ def main():
     print(f"Default parameters: score {score(before):.2f}")
 
     results = search(grid, starts)
-    best_d, best_stats, best_score = results[0]
-    # confirm the winner with more walkers and new seeds
-    confirm = measure(best_d, starts, n=1500, seed=999)
+    # Noise check: re-test the top 5 with more walkers and new seeds; keep the best of those.
+    finalists = []
+    for d, _, s400 in results[:5]:
+        st = measure(d, starts, n=1500, seed=999)
+        finalists.append((d, st, score(st)))
+        print(f"  finalist: score {s400:.2f} with 400 walkers -> {score(st):.2f} with 1,500")
+    finalists.sort(key=lambda x: x[2])
+    best_d, confirm, _ = finalists[0]
     print(f"Best setting confirmed with 1,500 walkers per start: score {score(confirm):.2f}")
 
     params = sim.Params(**best_d)
@@ -223,7 +289,8 @@ def main():
 def write_report(before, after, p0, p1, stab, secs, out="calibration_report.md"):
     lines = ["# Calibration report", "",
              f"{N_STARTS} random start points in Amherst, {WALKERS_PER_START} walkers each per setting; "
-             f"400 settings searched in 3 rounds; winner confirmed with 1,500 walkers per start. "
+             f"400 settings searched with Bayesian optimization (Optuna TPE); top 5 re-tested with 1,500 "
+             f"walkers per start and new seeds, best kept. "
              f"Run time {secs / 60:.0f} min.", "",
              "## ISRID target vs model", "",
              "| Statistic | ISRID | Before | After |", "| --- | --- | --- | --- |"]
@@ -244,6 +311,10 @@ def write_report(before, after, p0, p1, stab, secs, out="calibration_report.md")
     for k, v in after.items():
         if k.startswith("stop: ") and v > 0:
             lines.append(f"| {k[6:]} | {v:.1f}% |")
+    lines += ["", "## Where woods finds come from", "", "| Map class | Share of all finds |", "| --- | --- |"]
+    for k, v in after.items():
+        if k.startswith("woods_from: "):
+            lines.append(f"| {k[12:]} | {v:.1f}% |")
     lines += ["", "## Remaining error by statistic (largest first)", "",
               "| Statistic | Share of remaining error |", "| --- | --- |"]
     parts = {k: w * (abs(after[k] - sim.ISRID[k]) / 10.0 if k in SHARE_KEYS
@@ -252,9 +323,10 @@ def write_report(before, after, p0, p1, stab, secs, out="calibration_report.md")
     tot = sum(parts.values())
     for k, v in sorted(parts.items(), key=lambda x: -x[1])[:6]:
         lines.append(f"| {k} | {v / tot * 100:.0f}% |")
-    lines += ["", "DATA values (speed, mobility shape, 66% road crossing) were not tuned. "
-              "`mobility_scale` reconciles ISRID's mobility sample (n = 42) with its distance "
-              "sample (n = 175)."]
+    lines += ["", "DATA values (speed, 66% road crossing) were not tuned. ISRID's two samples disagree: "
+              "mobility hours (n = 42) are far more spread out than distances (n = 175). Walking time "
+              "is a lognormal (`walk_median_min`, `walk_sigma`) tuned to the larger distance sample. "
+              f"'Same elevation' = within +/-{sim.ELEV_SAME_M:g} m (2 m is inside elevation map noise)."]
     open(out, "w").write("\n".join(lines))
     print(f"Saved {out}")
     print("\n" + "\n".join(lines[6:]))

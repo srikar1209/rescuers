@@ -10,6 +10,8 @@ because witnesses and cameras make mistakes.
                     w *= reliability * exp(-d^2 / (2 * err^2)) + (1 - reliability) * 0.05
   camera_negative   passed within camera range during the window: w *= miss_rate
   area_searched     inside the area at search time: w *= (1 - POD)
+  not_reported      still missing at `time`, so nobody saw him on a road. For every minute on a
+                    road or path: w *= (1 - p_spot * traffic). p_spot is the calibrated value.
 """
 
 import json
@@ -41,7 +43,8 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
     """Multiplier for every walker's weight, shape (n,)."""
     cp = cp or ClueParams()
     cell = float(grid["cell"])
-    r, c = G.latlon_to_cell(grid, clue["lat"], clue["lon"])
+    if "lat" in clue:      # "not_reported" has no place
+        r, c = G.latlon_to_cell(grid, clue["lat"], clue["lon"])
     T = walks.minutes
     pos = walks.pos
 
@@ -63,6 +66,17 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
         m = T if t is None else int(np.clip(to_minute(t, start_hhmm), 0, T))
         d = np.hypot(pos[:, m, 0] - r, pos[:, m, 1] - c) * cell
         return np.where(d <= clue.get("radius_m", 150), 1 - cp.pod, 1.0)
+
+    if clue["type"] == "not_reported":
+        t = clue.get("time")
+        m = T if t is None else int(np.clip(to_minute(t, start_hhmm), 0, T))
+        traffic = sim.traffic_layer(grid)
+        H, W = traffic.shape
+        rr = np.clip(np.rint(pos[:, 1:m + 1, 0]).astype(int), 0, H - 1)
+        cc = np.clip(np.rint(pos[:, 1:m + 1, 1]).astype(int), 0, W - 1)
+        p_spot = walks.params.get("p_spot", sim.Params().p_spot)
+        rate = np.clip(p_spot * traffic[rr, cc], 0, 0.999)
+        return np.exp(np.log1p(-rate).sum(1))
 
     raise ValueError(f"Unknown clue type: {clue['type']}")
 
@@ -129,7 +143,7 @@ def run_demo(n=20000, seed=7, minutes=240):
     now = int(np.clip(to_minute("21:00", start_hhmm), 0, minutes))
 
     params = sim.load_params()
-    walks = sim.simulate(grid, start, n=n, minutes=minutes, seed=seed, params=params)
+    walks = sim.simulate(grid, start, n=n, minutes=minutes, seed=seed, params=params, spotting=False)
     w = np.ones(n)
     stages = []
 
@@ -150,6 +164,8 @@ def run_demo(n=20000, seed=7, minutes=240):
         if ess(w) < n / 2:
             walks, w = resample(walks, w, rng)
         record(f"After clue {clue['id']} ({clue['type']})")
+    w = w * clue_likelihood(grid, walks, {"type": "not_reported", "time": "21:00"}, start_hhmm)
+    record("Still missing (not reported)")
 
     save_preview(grid, stages, start, truth, case)
     return grid, walks, w

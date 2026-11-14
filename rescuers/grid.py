@@ -12,6 +12,9 @@ Layers in the grid (one value per 10 m cell):
   tpi        low-ground index: cell height minus the 210 m neighborhood mean
              (negative = lower than surroundings = drainage, ditch, valley)
   dist_road  meters to the nearest road or path
+  traffic    how busy a road or path is, 0 to 1 (only on road/path cells). Used for the chance
+             that someone sees the person. Add it to an existing grid with:
+                 python -m rescuers.grid --traffic
 """
 
 import json
@@ -63,6 +66,16 @@ NLCD = {
 PATH_TAGS = {"footway", "path", "track", "cycleway", "steps", "bridleway", "pedestrian"}
 ROAD_SKIP = {"proposed", "construction", "abandoned", "platform", "corridor"}
 BARRIER_TAGS = {"fence", "wall", "hedge", "retaining_wall", "city_wall", "hedge_bank"}
+# Relative traffic by OSM road type, 1 = main road. ASSUMPTION: follows the road hierarchy
+# (bigger road class = more cars and people). Quiet rural and residential streets are low.
+TRAFFIC = {
+    "motorway": 1.0, "trunk": 1.0, "primary": 1.0, "secondary": 0.6, "tertiary": 0.4,
+    "motorway_link": 1.0, "trunk_link": 1.0, "primary_link": 1.0, "secondary_link": 0.6,
+    "tertiary_link": 0.4, "residential": 0.2, "unclassified": 0.15, "living_street": 0.1,
+    "service": 0.05, "track": 0.02, "pedestrian": 0.3, "cycleway": 0.2, "footway": 0.1,
+    "path": 0.05, "steps": 0.05, "bridleway": 0.02,
+}
+TRAFFIC_DEFAULT = 0.1
 BIG_WATERWAY = {"river", "canal"}   # too wide to step over; other waterways are small streams
 
 
@@ -192,6 +205,36 @@ def build(save=True, preview=True):
     return grid
 
 
+def add_traffic(grid, save=True):
+    """Add the 'traffic' layer to an existing grid (does not change any other layer)."""
+    from affine import Affine
+    transform = Affine(*grid["transform"])
+    shape = grid["cls"].shape
+    f = gpd.read_file(D + "amherst_full_features.geojson").to_crs(grid["crs"])
+    hw = _tag(f, "highway")
+    hw = hw[hw.geometry.geom_type.isin(["LineString", "MultiLineString"])]
+    hw = hw[~hw["highway"].astype(str).isin(ROAD_SKIP)]
+    kind = hw["highway"].astype(str)
+    traffic = np.zeros(shape, dtype="float32")
+    weights = kind.map(lambda k: TRAFFIC.get(k, TRAFFIC_DEFAULT))
+    for w in sorted(weights.unique()):              # busier roads burned last, so they win
+        m = _burn(hw.geometry[weights == w], shape, transform, all_touched=True)
+        traffic[m] = np.maximum(traffic[m], w)
+    road_like = np.isin(grid["cls"], [ROAD, PATH])
+    traffic[~road_like] = 0
+    traffic[road_like & (traffic == 0)] = TRAFFIC_DEFAULT
+    grid["traffic"] = traffic
+    for lo, hi, name in [(0.5, 1.01, "main roads"), (0.3, 0.5, "medium roads"),
+                         (0.01, 0.3, "quiet roads and paths")]:
+        share = ((traffic >= lo) & (traffic < hi)).sum() / max(road_like.sum(), 1) * 100
+        print(f"  {name:<22} {share:5.1f}% of road/path cells")
+    if save:
+        keep = {k: v for k, v in grid.items() if k != "near_stream"}
+        np.savez_compressed(D + "grid.npz", **keep)
+        print("Saved data/grid.npz with the traffic layer")
+    return grid
+
+
 # ---------------- load and coordinates ----------------
 def load(path=D + "grid.npz"):
     z = np.load(path, allow_pickle=False)
@@ -294,4 +337,8 @@ def save_preview(grid, out="grid_preview.png"):
 
 
 if __name__ == "__main__":
-    build()
+    import sys
+    if "--traffic" in sys.argv:
+        add_traffic(load())
+    else:
+        add_traffic(build(save=False), save=True)
