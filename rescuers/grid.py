@@ -28,7 +28,7 @@ D = "data/"
 CELL = 10  # meters
 
 # ---------------- terrain classes ----------------
-OPEN, ROAD, PATH, BUILDING, WATER, BRUSH, WOODS, WETLAND, BARRIER, CEMETERY, DEV_OPEN = range(11)
+OPEN, ROAD, PATH, BUILDING, WATER, BRUSH, WOODS, WETLAND, BARRIER, CEMETERY, DEV_OPEN, STREAM = range(12)
 OUTSIDE = 255
 
 CLASSES = {
@@ -36,7 +36,8 @@ CLASSES = {
     ROAD: "Road",
     PATH: "Path / trail / sidewalk",
     BUILDING: "Building",
-    WATER: "Water",
+    WATER: "River / pond / lake",
+    STREAM: "Stream / brook / ditch",
     BRUSH: "Brush / shrub",
     WOODS: "Forest",
     WETLAND: "Wetland",
@@ -49,7 +50,7 @@ CLASSES = {
 SPEED = {
     OPEN: 0.91, ROAD: 1.00, PATH: 0.91, BUILDING: 0.0, WATER: 0.0,
     BRUSH: 0.67, WOODS: 0.83, WETLAND: 0.56, BARRIER: 0.0,
-    CEMETERY: 0.91, DEV_OPEN: 1.00, OUTSIDE: 0.0,
+    CEMETERY: 0.91, DEV_OPEN: 1.00, STREAM: 0.50, OUTSIDE: 0.0,
 }
 
 # NLCD land cover code -> our class (fills every cell OpenStreetMap does not cover)
@@ -62,6 +63,7 @@ NLCD = {
 PATH_TAGS = {"footway", "path", "track", "cycleway", "steps", "bridleway", "pedestrian"}
 ROAD_SKIP = {"proposed", "construction", "abandoned", "platform", "corridor"}
 BARRIER_TAGS = {"fence", "wall", "hedge", "retaining_wall", "city_wall", "hedge_bank"}
+BIG_WATERWAY = {"river", "canal"}   # too wide to step over; other waterways are small streams
 
 
 # ---------------- helpers ----------------
@@ -130,7 +132,13 @@ def build(save=True, preview=True):
         (CEMETERY, _tag(f, "landuse", ["cemetery"]), False),
         (DEV_OPEN, _tag(f, "amenity", ["parking"]), False),
         (WATER,    _tag(f, "natural", ["water"]), False),
-        (WATER,    _tag(f, "waterway"), True),
+    ]
+    ww = _tag(f, "waterway")
+    ww = ww[ww.geometry.geom_type.isin(["LineString", "MultiLineString"])]
+    big = ww["waterway"].astype(str).isin(BIG_WATERWAY)
+    layers += [
+        (STREAM,   ww[~big], True),
+        (WATER,    ww[big], True),
     ]
     hw = _tag(f, "highway")
     hw = hw[hw.geometry.geom_type.isin(["LineString", "MultiLineString"])]
@@ -258,8 +266,8 @@ def save_preview(grid, out="grid_preview.png"):
     from matplotlib.colors import ListedColormap, BoundaryNorm
     from matplotlib.patches import Patch
 
-    colors = ["#ecebb0", "#f2a541", "#ffffff", "#333333", "#3d85c6", "#c7d97a",
-              "#7fb069", "#6fb7a0", "#c0392b", "#8e6bbf", "#e3dccb"]
+    colors = ["#ecebb0", "#f2a541", "#ffffff", "#333333", "#1f5fa8", "#c7d97a",
+              "#7fb069", "#6fb7a0", "#c0392b", "#8e6bbf", "#e3dccb", "#5aa9e6"]
     cls = grid["cls"].astype(float)
     cls[grid["cls"] == OUTSIDE] = np.nan
     cmap = ListedColormap(colors)

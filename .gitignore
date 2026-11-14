@@ -20,3 +20,5 @@ __pycache__/
 
 # Mac
 .DS_Store
+!data/grid.npz
+!data/calibrated_params.json
