@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import io
 import os
 import sys
 import threading
@@ -9,6 +11,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
+from zipfile import ZipFile
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -24,6 +27,78 @@ LOCK = threading.RLock()
 COMPUTE_LOCK = threading.RLock()  # Serialize full-grid work on the free instance.
 HORIZON = 240
 MAX_RUNS = 3  # Bound stored walk paths and heatmaps on a small demo instance.
+DEMO_WALKS = PROJECT / 'ui/demo_walks.npz'
+DEMO_TIMELINE = PROJECT / 'ui/demo_timeline.zip'
+DEMO_LAST_MINUTE = 150  # 18:30 last seen to the 21:00 demo estimate.
+DEMO_SOURCES = ('data/grid.npz', 'data/calibrated_params.json', 'data/demo_case.json',
+                'rescuers/sim.py', 'rescuers/infer.py', 'ui/model_service.py', 'ui/serve.py')
+
+
+@lru_cache(maxsize=1)
+def demo_signature():
+    digest = hashlib.sha256()
+    for name in DEMO_SOURCES:
+        digest.update(name.encode())
+        with (PROJECT / name).open('rb') as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def demo_cache_matches(case):
+    start = case.get('start') or {}
+    demo = demo_case()['start']
+    try:
+        same_start = (float(start['lat']) == float(demo['lat'])
+                      and float(start['lon']) == float(demo['lon'])
+                      and start['time'] == demo['last_seen_time'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not (same_start and case.get('analysis_time') == '21:00'
+            and case.get('heading') in (None, '') and not case.get('goal')
+            and DEMO_WALKS.exists() and DEMO_TIMELINE.exists()):
+        return False
+    try:
+        with ZipFile(DEMO_TIMELINE) as archive:
+            return json.loads(archive.read('meta.json'))['signature'] == demo_signature()
+    except (OSError, KeyError, ValueError):
+        return False
+
+
+@lru_cache(maxsize=1)
+def cached_demo_walks():
+    with np.load(DEMO_WALKS, allow_pickle=False) as archive:
+        if str(archive['signature'].item()) != demo_signature():
+            raise ValueError('Demo walk cache does not match the current model')
+        walks = sim.Walks(
+            pos=archive['pos'], end=archive['end'], reason=archive['reason'],
+            kind=archive['kind'], speed=archive['speed'],
+            mobility_min=archive['mobility_min'], heading0=archive['heading0'],
+            minutes=HORIZON, start=tuple(archive['start'].tolist()),
+            params=json.loads(str(archive['params_json'].item())),
+            bounces=archive['bounces'], born=archive['born'])
+        baseline = archive['baseline'].astype(np.float64)
+    return walks, baseline
+
+
+def cached_demo_summary(run, minute):
+    if not run.get('demo_cache') or run['version'] != 0 or not 0 <= minute <= DEMO_LAST_MINUTE:
+        return None
+    try:
+        with ZipFile(DEMO_TIMELINE) as archive:
+            return json.loads(archive.read(f'summary/{minute:03d}.json'))
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def cached_demo_display(run, minute):
+    if not run.get('demo_cache') or run['version'] != 0 or not 0 <= minute <= DEMO_LAST_MINUTE:
+        return None
+    try:
+        with ZipFile(DEMO_TIMELINE) as archive:
+            return np.load(io.BytesIO(archive.read(f'display/{minute:03d}.npy')), allow_pickle=False)
+    except (OSError, KeyError, ValueError):
+        return None
 
 
 def model_grid():
@@ -140,6 +215,14 @@ def start_run(case):
     run = {'id': run_id, 'case': case, 'status': 'running', 'version': 0,
            'walks': None, 'weights': None, 'baseline_weights': None,
            'evidence': [], 'heat_cache': {}, 'error': None}
+    if demo_cache_matches(case):
+        try:
+            with COMPUTE_LOCK:
+                walks, baseline = cached_demo_walks()
+            run.update(walks=walks, baseline_weights=baseline,
+                       weights=baseline.copy(), status='ready', demo_cache=True)
+        except (OSError, KeyError, ValueError):
+            pass  # Stale or incomplete cache: use the ordinary simulator.
     with LOCK:
         if len(RUNS) >= MAX_RUNS:
             oldest_finished = next((id for id, old in RUNS.items()
@@ -174,8 +257,9 @@ def start_run(case):
                 run['status'] = 'error'
                 run['error'] = str(error)
 
-    EXECUTOR.submit(work)
-    return {'id': run_id, 'status': 'running'}
+    if run['status'] == 'running':
+        EXECUTOR.submit(work)
+    return {'id': run_id, 'status': run['status']}
 
 
 def get_run(run_id):
@@ -378,6 +462,10 @@ def separate_area_circles(areas, centers, heat, cell, gap_m=10):
 
 def summary(run, minute):
     with COMPUTE_LOCK:
+        minute = int(minute)
+        cached = cached_demo_summary(run, minute)
+        if cached is not None:
+            return cached
         return _summary(run, minute)
 
 

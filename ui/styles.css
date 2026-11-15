@@ -159,6 +159,8 @@ input::placeholder, textarea::placeholder { color: #9aaba0; }
 .case-panel { background: #fff; }
 .case-panel .panel-scroll { padding: 28px 24px 32px; }
 .panel-intro { margin-bottom: 32px; }
+.demo-fill { width: 100%; margin: -12px 0 24px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.demo-fill:hover { border-color: var(--muted); }
 .eyebrow, .group-label { color: #737373; font-size: 10px; letter-spacing: .11em; }
 h1 { font-size: 31px; font-weight: 720; letter-spacing: -.065em; line-height: 1.08; margin: 14px 0 12px; }
 h2 { font-size: 25px; font-weight: 700; letter-spacing: -.055em; }
@@ -248,9 +250,6 @@ input::placeholder, textarea::placeholder { color: #aaa; }
   .menu-button { min-width: 88px; }
   .menu-button .menu-label { display: inline; font-size: 10px; }
   .top-actions { gap: 8px; }
-}
-@media (max-width: 430px) {
-  #demoButton { display: none; }
 }
 .place-detail a { color: #81251f; font-size: 11px; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
 .menu-button .menu-icon { width: 15px; height: 16px; background: transparent; justify-content: center; }

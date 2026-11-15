@@ -712,6 +712,7 @@ async function waitForRun(id) {
 $('caseForm').addEventListener('submit', runCase);
 $('caseForm').addEventListener('input', event => {
   const modelFields = new Set(['lastSeenTime', 'analysisTime', 'startLat', 'startLon', 'heading', 'goalLat', 'goalLon']);
+  if (modelFields.has(event.target.id)) state.demoClues = [];
   if (!modelFields.has(event.target.id) || !state.run) {
     if (state.run?.status === 'ready') renderEvidence();
     return;
@@ -1081,8 +1082,10 @@ $('demoButton').onclick = async () => {
     $('heading').value = '';
     $('goalLabel').value = '';
     $('goalLat').value = ''; $('goalLon').value = '';
+    $('startLat').dispatchEvent(new Event('input', {bubbles: true}));
     state.demoClues = demo.clues;
-    await runCase();
+    setCaseCollapsed(false);
+    status('runStatus', 'Demo fields filled. Review them, then run the 5,000 walkers.');
   } catch (error) { status('runStatus', error.message, true); }
 };
 showKindFields();

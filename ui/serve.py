@@ -126,6 +126,20 @@ def read_grid_tile(z: int, x: int, y: int):
         return grid_tile(z, x, y)
 
 
+def make_heat_display(heat):
+    """The same 8-bit blurred map field used by live and baked demo tiles."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+    positive = heat[heat > 0]
+    ranked = np.sort(positive)[::-1]
+    core_count = min(len(ranked), int(np.searchsorted(np.cumsum(ranked), 0.8) + 1))
+    core = ranked[:core_count]
+    reference = max(float(np.quantile(core, .95)), 1e-15)
+    strength = np.sqrt(np.clip(heat / reference, 0, 1))
+    field = Image.fromarray(np.uint8(np.round(strength * 255)), 'L')
+    return np.asarray(field.filter(ImageFilter.GaussianBlur(radius=8))).copy()
+
+
 def request_bytes(url: str, data: bytes | None = None) -> bytes:
     headers = {'User-Agent': 'Rescuers-Amherst-Terrain/0.1 (hackathon demo)', 'Accept': '*/*'}
     if data is not None:
@@ -343,10 +357,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def heat_tile(self, run, z, x, y, minute):
         import numpy as np
-        from PIL import Image, ImageFilter
+        from PIL import Image
         if z != 14 or not (0 <= x < 2**z and 0 <= y < 2**z):
             raise ValueError('Unsupported probability tile')
-        heat = model.run_heat(run, minute)
         _, cls, transform = load_grid()
         pixel = (np.arange(256, dtype=np.float64) + 0.5) / 256
         tx, ty = np.meshgrid(x + pixel, y + pixel)
@@ -362,14 +375,8 @@ class Handler(SimpleHTTPRequestHandler):
         display = run.setdefault('heat_display', {})
         key = (run['version'], int(minute))
         if key not in display:
-            positive = heat[heat > 0]
-            ranked = np.sort(positive)[::-1]
-            core_count = min(len(ranked), int(np.searchsorted(np.cumsum(ranked), 0.8) + 1))
-            core = ranked[:core_count]
-            reference = max(float(np.quantile(core, .95)), 1e-15)
-            strength = np.sqrt(np.clip(heat / reference, 0, 1))
-            field = Image.fromarray(np.uint8(np.round(strength * 255)), 'L')
-            display[key] = np.asarray(field.filter(ImageFilter.GaussianBlur(radius=8))).copy()
+            cached = model.cached_demo_display(run, int(minute))
+            display[key] = cached if cached is not None else make_heat_display(model.run_heat(run, minute))
             if len(display) > 2:
                 display.pop(next(iter(display)))
         intensity = np.where(valid & (cls[rr, cc] != 255), display[key][rr, cc] / 255, 0)

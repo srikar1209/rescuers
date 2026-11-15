@@ -89,7 +89,7 @@ python -m pip install -r requirements-ui.txt
 python ui/serve.py --port 8002
 ```
 
-Open http://127.0.0.1:8002/ and click **Demo**. Keep the terminal running; Ctrl+C stops it. If port 8002 is busy, pick another port and open the matching URL. An existing Python environment with NumPy and Pillow also works. See [ui/README.md](ui/README.md) for case and clue controls, optional Gemini setup, and troubleshooting.
+Open http://127.0.0.1:8002/, use **Autofill demo data** in Case details, then click **Run 5,000 walkers**. Keep the terminal running; Ctrl+C stops it. If port 8002 is busy, pick another port and open the matching URL. An existing Python environment with NumPy and Pillow also works. See [ui/README.md](ui/README.md) for case and clue controls, optional Gemini setup, and troubleshooting.
 
 Note: the UI currently runs 5,000 walkers. The benchmark used 20,000.
 
