@@ -16,9 +16,14 @@ When a clue comes in, the map updates. A sighting pulls the heat toward that pla
 
 Scope: people with dementia, on foot, in Amherst, MA.
 
+![Heat map before and after clues](images/infer_preview.png)
+
 ## Methodology
 
 1. **Map:** real Amherst terrain on a 10 m grid, from OpenStreetMap, USGS 3DEP elevation, and NLCD 2021 land cover. Roads have traffic levels; the grid also has buildings, fences, woods, wetland, streams, and low ground.
+
+   <img src="images/grid_preview.png" width="600" alt="Amherst model grid">
+
 2. **Walkers:** each one follows rules from Koester's lost-person research on dementia. Most go straight until stuck, 66% cross roads instead of following them, they tend to go downhill, they can stop at buildings, water, or rough terrain, and they can be spotted by the public on busy roads.
 3. **Calibration:** 22 rule numbers tuned with Bayesian optimization (Optuna) until the walkers match 16 ISRID statistics: distances, find locations, and elevation change. Every rule is labeled DATA, EXPERT, or ASSUMPTION.
 4. **Clues:** clues reweight the walkers, like a particle filter. A sighting also restarts new walkers from the sighting place (`infer.apply_clue`). "Still missing" lowers walkers that spent time on busy roads.
@@ -28,11 +33,11 @@ Scope: people with dementia, on foot, in Amherst, MA.
 
 ### Calibration
 
-The error score against the 16 ISRID statistics dropped from 9.9 (default rules) to 3.8. Distances (25/50/75% = 0.4/1.0/2.5 km vs ISRID 0.3/1.0/2.4), road, structure, and forest finds match. See `reports/calibration_report.md`.
+The error score against the 16 ISRID statistics dropped from 9.9 (default rules) to 3.8. Distances (25/50/75% = 0.4/1.0/2.5 km vs ISRID 0.3/1.0/2.4), road, structure, and forest finds match. See [`reports/calibration_report.md`](reports/calibration_report.md).
 
 ### Benchmark (999 held-out cases)
 
-The true location is placed only from ISRID statistics, never by our own walkers. Score = area searched before reaching the person, most likely cells first. See `reports/benchmark_report.md` and `images/benchmark.png`.
+The true location is placed only from ISRID statistics, never by our own walkers. Score = area searched before reaching the person, most likely cells first. See [`reports/benchmark_report.md`](reports/benchmark_report.md).
 
 | | Circle search | Sim2Find |
 |---|---|---|
@@ -41,9 +46,13 @@ The true location is placed only from ISRID statistics, never by our own walkers
 | One sighting, person > 3 km away (median) | 20.1 km² | **4.4 km²** |
 | No clues: total ground searched | 23,126 km² | **19,381 km² (16% less)** |
 
+![Sim2Find vs circle search](images/benchmark.png)
+
 ### Sensitivity Analysis
 
-Each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See `reports/sensitivity_report.md`.
+Each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See [`reports/sensitivity_report.md`](reports/sensitivity_report.md).
+
+![Which rule numbers matter](images/sensitivity.png)
 
 ## Limitations
 
@@ -89,7 +98,7 @@ python -m pip install -r requirements-ui.txt
 python ui/serve.py --port 8002
 ```
 
-Open http://127.0.0.1:8002/, use **Autofill demo data** in Case details, then click **Run 5,000 walkers**. Keep the terminal running; Ctrl+C stops it. If port 8002 is busy, pick another port and open the matching URL. An existing Python environment with NumPy and Pillow also works. See [ui/README.md](ui/README.md) for case and clue controls, optional Gemini setup, and troubleshooting.
+Open http://127.0.0.1:8002/ and click **Demo**. Keep the terminal running; Ctrl+C stops it. If port 8002 is busy, pick another port and open the matching URL. An existing Python environment with NumPy and Pillow also works. See [ui/README.md](ui/README.md) for case and clue controls, optional Gemini setup, and troubleshooting.
 
 Note: the UI currently runs 5,000 walkers. The benchmark used 20,000.
 
