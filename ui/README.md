@@ -19,6 +19,8 @@ The hosted demo retains at most three recent simulation runs to limit memory use
 
 The UI needs the tracked `data/grid.npz` and `data/calibrated_params.json`. You do **not** need the raw TIFFs or data-download scripts to run it. SciPy is optional for this UI path; the simulator has a NumPy fallback for its drainage calculation. Rebuilding the grid requires the packages in `environment.yml` and the source files described in [`data/README.md`](../data/README.md).
 
+`tiles_z14.zip` contains terrain and class PNGs baked from the committed grid, so the hosted app can serve map tiles without raster calculations while walkers run. Regenerate it with `python scripts/bake_ui_tiles.py` after changing `data/grid.npz`. If the zip is absent, the local server computes tiles on demand.
+
 ## Try the fictional demo
 
 1. Click **Demo** in the top bar. It fills Walter's fictional case and starts the walkers.

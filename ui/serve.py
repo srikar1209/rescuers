@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
+from zipfile import ZipFile
 
 import model_service as model
 
@@ -35,17 +36,16 @@ OVERPASS = (
     'https://overpass-api.de/api/interpreter',
 )
 GRID = DATA / 'grid.npz'
+BAKED_TILES = ROOT / 'tiles_z14.zip'
 GRID_LOCK = threading.Lock()
 
 
 @lru_cache(maxsize=1)
 def load_grid():
-    import numpy as np
-    with np.load(GRID, allow_pickle=False) as archive:
-        crs = str(archive['crs'])
-        if 'UTM zone 18N' not in crs:
-            raise ValueError('The UI grid reader expects the committed Amherst UTM zone 18N grid')
-        return archive['dem'], archive['cls'], archive['transform'].astype(float)
+    grid = model.model_grid()
+    if 'UTM zone 18N' not in grid['crs']:
+        raise ValueError('The UI grid reader expects the committed Amherst UTM zone 18N grid')
+    return grid['dem'], grid['cls'], grid['transform']
 
 
 def utm18(lon, lat):
@@ -113,8 +113,16 @@ def grid_tile(z: int, x: int, y: int):
 
 
 def read_grid_tile(z: int, x: int, y: int):
-    # Avoid concurrent first-load decompression of the 26 MB grid archive.
-    with GRID_LOCK:
+    if BAKED_TILES.exists():
+        with ZipFile(BAKED_TILES) as archive:
+            try:
+                prefix = f'{z}/{x}/{y}.png'
+                return (archive.read(f'terrain/{prefix}'),
+                        archive.read(f'classes/{prefix}'))
+            except KeyError:
+                return None  # The requested tile is outside the baked grid.
+    # Local development can still generate tiles directly from data/grid.npz.
+    with model.COMPUTE_LOCK, GRID_LOCK:
         return grid_tile(z, x, y)
 
 
@@ -304,7 +312,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 minute = int(query.get('minute', ['240'])[0])
                 run = model.get_run(match[1])
-                with model.LOCK:
+                with model.COMPUTE_LOCK, model.LOCK:
                     requested_version = int(query.get('version', [str(run['version'])])[0])
                     if requested_version != run['version']:
                         raise ValueError('Evidence version changed; refresh the tile')

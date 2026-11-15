@@ -21,13 +21,22 @@ from rescuers import grid as G, infer, sim
 EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='amherst-walkers')
 RUNS = {}
 LOCK = threading.RLock()
+COMPUTE_LOCK = threading.RLock()  # Serialize full-grid work on the free instance.
 HORIZON = 240
 MAX_RUNS = 3  # Bound stored walk paths and heatmaps on a small demo instance.
 
 
-@lru_cache(maxsize=1)
 def model_grid():
-    return G.load(str(PROJECT / 'data/grid.npz'))
+    with COMPUTE_LOCK:
+        return _load_model_grid()
+
+
+@lru_cache(maxsize=1)
+def _load_model_grid():
+    grid = G.load(str(PROJECT / 'data/grid.npz'))
+    # The UI never computes benchmark road offsets. Keep this layer out of RAM.
+    grid.pop('dist_road', None)
+    return grid
 
 
 def point(value, label='Location'):
@@ -142,18 +151,19 @@ def start_run(case):
 
     def work():
         try:
-            g = model_grid()
-            params = sim.load_params(str(PROJECT / 'data/calibrated_params.json'), verbose=False)
-            walks = sim.simulate(g, start_rc, n=5000, minutes=HORIZON,
-                                 heading=heading, goal=goal_rc, seed=42, params=params,
-                                 spotting=False)
-            # The case is still open at the estimate time. Apply the calibrated
-            # traffic-based likelihood without stopping walkers during simulation.
-            baseline = infer.clue_likelihood(
-                g, walks, {'type': 'not_reported', 'time': case['analysis_time']},
-                case['start']['time'])
-            baseline = np.maximum(baseline, np.finfo(np.float64).tiny)
-            baseline /= baseline.sum()
+            with COMPUTE_LOCK:
+                g = model_grid()
+                params = sim.load_params(str(PROJECT / 'data/calibrated_params.json'), verbose=False)
+                walks = sim.simulate(g, start_rc, n=5000, minutes=HORIZON,
+                                     heading=heading, goal=goal_rc, seed=42, params=params,
+                                     spotting=False)
+                # The case is still open at the estimate time. Apply the calibrated
+                # traffic-based likelihood without stopping walkers during simulation.
+                baseline = infer.clue_likelihood(
+                    g, walks, {'type': 'not_reported', 'time': case['analysis_time']},
+                    case['start']['time'])
+                baseline = np.maximum(baseline, np.finfo(np.float64).tiny)
+                baseline /= baseline.sum()
             with LOCK:
                 run['walks'] = walks
                 run['baseline_weights'] = baseline
@@ -184,6 +194,11 @@ def public_run(run):
 
 
 def set_evidence(run, items):
+    with COMPUTE_LOCK:
+        return _set_evidence(run, items)
+
+
+def _set_evidence(run, items):
     if run['status'] != 'ready':
         raise ValueError('Simulation is not ready')
     before_ess = float(infer.ess(run['weights']))
@@ -362,6 +377,11 @@ def separate_area_circles(areas, centers, heat, cell, gap_m=10):
 
 
 def summary(run, minute):
+    with COMPUTE_LOCK:
+        return _summary(run, minute)
+
+
+def _summary(run, minute):
     with LOCK:
         heat = run_heat(run, minute)
         weights = run['weights'].copy()

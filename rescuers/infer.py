@@ -200,12 +200,20 @@ def apply_clue(grid, walks, w, clue, start_hhmm, params=None, seed=0, rng=None):
 def ring_prior(grid, center):
     """ISRID distance rings around `center` (row, col): probability per cell, sums to 1."""
     H, W = grid["cls"].shape
-    rr, cc = np.ogrid[0:H, 0:W]
-    d = np.maximum(np.hypot(rr - center[0], cc - center[1]) * float(grid["cell"]) / 1000, 0.02)
-    f = np.exp(-(np.log(d) - sim.DIST_MU) ** 2 / (2 * sim.DIST_SIGMA ** 2)) / (d * sim.DIST_SIGMA)
-    prior = f / d
-    prior[np.isin(grid["cls"], [G.OUTSIDE, G.BUILDING, G.BARRIER])] = 0
-    return prior / prior.sum()
+    prior = np.empty((H, W), dtype=np.float64)
+    cols = np.arange(W)[None, :] - center[1]
+    # The same density calculation in bounded row batches avoids holding many
+    # full-grid float64 temporaries at once on the hosted demo instance.
+    for row0 in range(0, H, 128):
+        row1 = min(row0 + 128, H)
+        rows = np.arange(row0, row1)[:, None] - center[0]
+        d = np.maximum(np.hypot(rows, cols) * float(grid["cell"]) / 1000, 0.02)
+        f = np.exp(-(np.log(d) - sim.DIST_MU) ** 2 / (2 * sim.DIST_SIGMA ** 2)) / (d * sim.DIST_SIGMA)
+        chunk = prior[row0:row1]
+        chunk[:] = f / d
+        chunk[np.isin(grid["cls"][row0:row1], [G.OUTSIDE, G.BUILDING, G.BARRIER])] = 0
+    prior /= prior.sum()
+    return prior
 
 
 def heatmap(grid, walks, w, minute=None, smooth_cells=2.0, floor=0.05, center=None):
