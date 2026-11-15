@@ -15,7 +15,7 @@ python ui/serve.py --port 8002
 
 Open `http://127.0.0.1:8002/` in your browser. Keep the terminal open. Press Ctrl+C to stop the server. If port 8002 is occupied, pass a different `--port` and open that URL. The server binds to `127.0.0.1` and stores runs only in memory; restarting it clears them.
 
-The hosted demo retains at most three recent simulation runs to limit memory use. Starting a fourth run discards the oldest finished run; reopen the case and run it again if a previous run is no longer available.
+The hosted demo retains at most three recent simulation runs to limit memory use. Starting a fourth run discards the oldest finished run. Render may also clear runs when the free instance sleeps or restarts. If an open page requests a cleared run, the UI rebuilds its case and reapplies accepted clues; notes that were not accepted still remain only in that browser tab.
 
 The UI needs the tracked `data/grid.npz` and `data/calibrated_params.json`. You do **not** need the raw TIFFs or data-download scripts to run it. SciPy is optional for this UI path; the simulator has a NumPy fallback for its drainage calculation. Rebuilding the grid requires the packages in `environment.yml` and the source files described in [`data/README.md`](../data/README.md).
 
@@ -37,7 +37,7 @@ The top three priority areas are display groupings around strong heatmap peaks, 
 3. Optionally choose a departure direction and pin a possible goal. A goal name without a pin is context only. Age and condition are recorded as context and do not change the walker rules.
 4. Click **Run 5,000 walkers**. The map focuses on the last-seen point and then the probability estimate. A run may take a little while. Changing starting inputs requires another run.
 
-Use **Case details** to reopen the form after a run. Drag to pan, scroll or use `+`/`−` to zoom, and use **Focus estimate** to return to the probability area. The collapsed **Location estimate** control at the bottom opens a time slider. It changes the displayed minute within the run; it does not rerun walkers.
+Use **Case details** to reopen the form after a run. Drag to pan, scroll or use `+`/`−` to zoom, and use **Focus estimate** to return to the probability area. The collapsed **Location estimate** control at the bottom opens a time slider. It changes the displayed minute within the run; it does not rerun walkers. The app stores walker paths but computes heatmaps for selected minutes on demand; the slider waits briefly for dragging to settle before requesting a new minute.
 
 ## Add and revise clues
 

@@ -37,6 +37,7 @@ let clueOpener = null;
 let cameraMove = null;
 let startDescriptionRequest = 0;
 let suppressPickClick = false;
+let recoveringRun = null;
 const isDarkTheme = () => document.documentElement.dataset.theme === 'dark';
 function applyTheme(theme) {
   const dark = theme === 'dark';
@@ -595,7 +596,11 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => {
     throw new Error('The server connection was interrupted. Refresh the page and run the walkers again.');
   });
-  if (!response.ok) throw new Error(data.error || 'Request failed');
+  if (!response.ok) {
+    const error = new Error(data.error || 'Request failed');
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function status(id, message, error = false) {
@@ -909,9 +914,10 @@ $('closePlaceDetail').onclick = () => {
 async function updateSummary() {
   if (!state.run || state.run.status !== 'ready') return;
   const request = ++state.summaryRequest;
+  const runId = state.run.id;
   try {
-    const result = await api('/api/runs/' + state.run.id + '/summary?minute=' + state.minute);
-    if (request !== state.summaryRequest || result.version !== state.version) return;
+    const result = await api('/api/runs/' + runId + '/summary?minute=' + state.minute);
+    if (request !== state.summaryRequest || state.run?.id !== runId || result.version !== state.version) return;
     $('area80').textContent = Number(result.area80_km2).toFixed(2) + ' km²';
     $('ess').textContent = Math.round(result.ess).toLocaleString();
     $('essWarning').hidden = result.ess >= 1000;
@@ -951,19 +957,75 @@ async function updateSummary() {
     }
     requestDraw();
   } catch (error) {
+    if (request !== state.summaryRequest || state.run?.id !== runId) return;
+    if (error.status === 404 && error.message === 'Unknown run') {
+      if (!recoveringRun) recoverRun();
+      return;
+    }
     status('runStatus', error.message, true);
     $('placeListStatus').textContent = 'Could not load search areas: ' + error.message;
     $('placeListStatus').hidden = false;
   }
 }
-$('minuteSlider').addEventListener('input', e => {
-  state.minute = Number(e.target.value);
-  $('timeLabel').textContent = addMinutes(state.case.start.time, state.minute);
+async function recoverRun() {
+  if (recoveringRun || !state.case || !state.run) return recoveringRun;
+  const expiredId = state.run.id;
+  const acceptedClues = state.evidence.slice();
+  recoveringRun = (async () => {
+    status('runStatus', 'The server cleared this run. Rebuilding the estimate and accepted clues…');
+    $('placeListStatus').textContent = 'Restoring search areas…';
+    $('placeListStatus').hidden = false;
+    $('addEvidence').disabled = true;
+    const created = await api('/api/runs', {method: 'POST', body: JSON.stringify(state.case)});
+    if (state.run?.id !== expiredId) return;
+    state.run = created;
+    state.version = 0;
+    state.summaryRequest++;
+    heatTiles.clear(); walkerPointCache.clear(); requestDraw();
+    let ready;
+    while (state.run?.id === created.id) {
+      ready = await api('/api/runs/' + created.id);
+      if (ready.status === 'error') throw new Error(ready.error || 'Simulation failed');
+      if (ready.status === 'ready') break;
+      await new Promise(resolve => setTimeout(resolve, 850));
+    }
+    if (state.run?.id !== created.id) return;
+    state.run = ready;
+    if (acceptedClues.length) {
+      state.run = await api('/api/runs/' + created.id + '/evidence',
+        {method: 'PUT', body: JSON.stringify(acceptedClues)});
+      state.evidence = state.run.evidence;
+      state.version = state.run.version;
+    }
+    $('addEvidence').disabled = false;
+    renderEvidence();
+    await updateSummary();
+    requestDraw();
+    status('runStatus', 'Estimate restored from this case and its accepted clues.');
+  })().catch(error => {
+    status('runStatus', 'Could not restore the run: ' + error.message + '. Run the case again.', true);
+    $('placeListStatus').textContent = 'Could not restore search areas. Run the case again.';
+  }).finally(() => { recoveringRun = null; });
+  return recoveringRun;
+}
+function showMinute(minute) {
+  state.minute = minute;
+  $('timeLabel').textContent = addMinutes(state.case.start.time, minute);
   if (heatTiles.size > 100) heatTiles.clear();
   if (walkerPointCache.size > 16) walkerPointCache.clear();
   requestDraw();
+  updateSummary();
+}
+$('minuteSlider').addEventListener('input', e => {
+  const minute = Number(e.target.value);
+  $('timeLabel').textContent = addMinutes(state.case.start.time, minute);
+  state.summaryRequest++;
   clearTimeout(state.summaryTimer);
-  state.summaryTimer = setTimeout(updateSummary, 180);
+  state.summaryTimer = setTimeout(() => showMinute(minute), 280);
+});
+$('minuteSlider').addEventListener('change', e => {
+  clearTimeout(state.summaryTimer);
+  showMinute(Number(e.target.value));
 });
 $('extractButton').onclick = async () => {
   const text = $('evidenceText').value.trim();
