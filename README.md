@@ -1,16 +1,14 @@
 # Sim2Find
 
-**20,000 walks. One person.**
-
 Built at HackUMass XIV by team Rescuers. Live demo: [sim2find.us](https://sim2find.us)
 
-## Why
+## Motivation
 
 We wanted to work on missing person cases that go unsolved because the evidence is confusing or there's almost none. That was too big for 36 hours. But while reading, one group kept showing up: older people with dementia who walk away from home and get lost. They don't know they're lost, so they don't call for help or answer when people shout their name. They just keep walking.
 
 A lot is already known about them. In Koester's dementia incident data (ISRID), most keep walking in one direction until something stops them, and 95% of those found within 24 hours were alive, versus 77% of those found later. (These are observed groups, not a causal estimate of search speed.) But when someone goes missing, the search often still starts with a circle around the house. We wanted to turn that knowledge, plus whatever clues come in, into a map that tells a team where to look first.
 
-## What it does
+## Overview
 
 You tell Sim2Find where and when the person was last seen. It simulates thousands of possible walks from that spot on the real Amherst map, based on how people with dementia usually behave. The result is a **heat map, not a pin**: red areas are where most walks ended, so that's where to look first.
 
@@ -18,7 +16,7 @@ When a clue comes in, the map updates. A sighting pulls the heat toward that pla
 
 Scope: people with dementia, on foot, in Amherst, MA.
 
-## How it works
+## Methodology
 
 1. **Map:** real Amherst terrain on a 10 m grid, from OpenStreetMap, USGS 3DEP elevation, and NLCD 2021 land cover. Roads have traffic levels; the grid also has buildings, fences, woods, wetland, streams, and low ground.
 2. **Walkers:** each one follows rules from Koester's lost-person research on dementia. Most go straight until stuck, 66% cross roads instead of following them, they tend to go downhill, they can stop at buildings, water, or rough terrain, and they can be spotted by the public on busy roads.
@@ -28,9 +26,13 @@ Scope: people with dementia, on foot, in Amherst, MA.
 
 ## Results
 
-**Calibration:** the error score against the 16 ISRID statistics dropped from 9.9 (default rules) to 3.8. Distances (25/50/75% = 0.4/1.0/2.5 km vs ISRID 0.3/1.0/2.4), road, structure, and forest finds match. See `calibration_report.md`.
+### Calibration
 
-**Benchmark (999 test cases):** the true location is placed only from ISRID statistics, never by our own walkers. Score = area searched before reaching the person, most likely cells first. See `benchmark_report.md` and `benchmark.png`.
+The error score against the 16 ISRID statistics dropped from 9.9 (default rules) to 3.8. Distances (25/50/75% = 0.4/1.0/2.5 km vs ISRID 0.3/1.0/2.4), road, structure, and forest finds match. See `calibration_report.md`.
+
+### Benchmark (999 held-out cases)
+
+The true location is placed only from ISRID statistics, never by our own walkers. Score = area searched before reaching the person, most likely cells first. See `benchmark_report.md` and `benchmark.png`.
 
 | | Circle search | Sim2Find |
 |---|---|---|
@@ -39,9 +41,11 @@ Scope: people with dementia, on foot, in Amherst, MA.
 | One sighting, person > 3 km away (median) | 20.1 km² | **4.4 km²** |
 | No clues: total ground searched | 23,126 km² | **19,381 km² (16% less)** |
 
-**Sensitivity:** each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See `sensitivity_report.md`.
+### Sensitivity Analysis
 
-## Limits
+Each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See `sensitivity_report.md`.
+
+## Limitations
 
 - The demo case (Walter) is fictional.
 - The benchmark cases are built from published ISRID statistics, not real case records.
@@ -50,7 +54,7 @@ Scope: people with dementia, on foot, in Amherst, MA.
 
 Next step: test it against real solved cases with a search team.
 
-## Project structure
+## Repository Structure
 
 ```
 rescuers/
@@ -71,7 +75,7 @@ rescuers/
   render.yaml      Render deployment for sim2find.us
 ```
 
-## Run the UI
+## Quick Start (Local)
 
 The repo includes `data/grid.npz` and `data/calibrated_params.json`, so you don't need GIS files to try it. From the repo root:
 
@@ -86,7 +90,7 @@ Open http://127.0.0.1:8002/ and click **Demo**. Keep the terminal running; Ctrl+
 
 Note: the UI currently runs 5,000 walkers. The benchmark used 20,000.
 
-## Live demo: sim2find.us
+## Deployment (sim2find.us)
 
 The root `render.yaml` creates a Python web service on Render's Free plan. It installs only the UI dependencies, serves on Render's assigned `PORT`, and checks `/api/health`. `.python-version` selects Python 3.12. The committed Amherst grid is enough to run the app.
 
@@ -99,7 +103,7 @@ The root `render.yaml` creates a Python web service on Render's Free plan. It in
 
 Render Free services sleep after 15 minutes without traffic, so the first request can take about a minute. Runs live in memory and disappear when the server restarts. Anyone can create runs, so this is a hackathon demo, not an operational search service. Manual clues work without an AI key. To turn on Gemini extraction, add `GEMINI_API_KEY` in Render's **Environment** settings, never in Git; public use can consume your API quota.
 
-## Reproduce the model results
+## Reproducing the Results
 
 Needs the full conda environment (`environment.yml`) and the source data (see [data/README.md](data/README.md)).
 
@@ -112,7 +116,7 @@ python -m rescuers.sensitivity         # ~5 min
 python -m rescuers.infer               # demo case, saves infer_preview.png
 ```
 
-## Key sources
+## References
 
 - [Koester, Lost Person Behavior, dementia chapter](https://www.dbs-sar.com/LPB/Dementia.pdf) (ISRID statistics)
 - [Koester and Stooksbury (1995)](https://www.dbs-sar.com/SAR_Research/WEM_article.htm), Virginia dementia search incidents
