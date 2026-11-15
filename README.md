@@ -16,13 +16,13 @@ When a clue comes in, the map updates. A sighting pulls the heat toward that pla
 
 Scope: people with dementia, on foot, in Amherst, MA.
 
-![Heat map before and after clues](images/infer_preview.png)
+<a href="images/infer_preview.png"><img src="images/infer_preview.png" width="500" alt="Heat map before and after clues"></a>
 
 ## Methodology
 
 1. **Map:** real Amherst terrain on a 10 m grid, from OpenStreetMap, USGS 3DEP elevation, and NLCD 2021 land cover. Roads have traffic levels; the grid also has buildings, fences, woods, wetland, streams, and low ground.
 
-   <img src="images/grid_preview.png" width="600" alt="Amherst model grid">
+   <a href="images/grid_preview.png"><img src="images/grid_preview.png" width="400" alt="Amherst model grid"></a>
 
 2. **Walkers:** each one follows rules from Koester's lost-person research on dementia. Most go straight until stuck, 66% cross roads instead of following them, they tend to go downhill, they can stop at buildings, water, or rough terrain, and they can be spotted by the public on busy roads.
 3. **Calibration:** 22 rule numbers tuned with Bayesian optimization (Optuna) until the walkers match 16 ISRID statistics: distances, find locations, and elevation change. Every rule is labeled DATA, EXPERT, or ASSUMPTION.
@@ -46,13 +46,13 @@ The true location is placed only from ISRID statistics, never by our own walkers
 | One sighting, person > 3 km away (median) | 20.1 km² | **4.4 km²** |
 | No clues: total ground searched | 23,126 km² | **19,381 km² (16% less)** |
 
-![Sim2Find vs circle search](images/benchmark.png)
+<a href="images/benchmark.png"><img src="images/benchmark.png" width="500" alt="Sim2Find vs circle search"></a>
 
 ### Sensitivity Analysis
 
 Each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See [`reports/sensitivity_report.md`](reports/sensitivity_report.md).
 
-![Which rule numbers matter](images/sensitivity.png)
+<a href="images/sensitivity.png"><img src="images/sensitivity.png" width="400" alt="Which rule numbers matter"></a>
 
 ## Limitations
 
