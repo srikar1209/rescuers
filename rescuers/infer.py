@@ -46,23 +46,38 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
         r, c = G.latlon_to_cell(grid, clue["lat"], clue["lon"])
     T = walks.minutes
     pos = walks.pos
+    n = pos.shape[0]
+    born = walks.born if walks.born is not None else np.zeros(n, dtype=int)
+
+    def masked_min_dist(lo, hi):
+        """Closest approach in minutes lo..hi, ignoring minutes before a walker was born."""
+        seg = pos[:, lo:hi + 1]
+        d = np.hypot(seg[..., 0] - r, seg[..., 1] - c) * cell
+        d[np.arange(lo, hi + 1)[None, :] < born[:, None]] = np.inf
+        return d.min(1)
 
     if clue["type"] == "sighting":
         t = to_minute(clue["time"], start_hhmm)
         if not 0 <= t <= T:
             raise ValueError('Sighting is outside the simulation window')
         lo, hi = int(max(0, t - cp.sighting_window_min)), int(min(T, t + cp.sighting_window_min))
-        seg = pos[:, lo:hi + 1]
-        d = np.hypot(seg[..., 0] - r, seg[..., 1] - c).min(1) * cell
-        return cp.reliability * np.exp(-d ** 2 / (2 * cp.sighting_err_m ** 2)) + (1 - cp.reliability) * 0.05
+        d = masked_min_dist(lo, hi)
+        rel = clue.get("reliability", cp.reliability)     # per clue, from the LLM (high/medium/low)
+        return rel * np.exp(-d ** 2 / (2 * cp.sighting_err_m ** 2)) + (1 - rel) * 0.05
 
     if clue["type"] == "camera_negative":
+<<<<<<< HEAD
         lo, hi = [to_minute(x, start_hhmm) for x in clue["window"]]
         if not 0 <= lo <= hi <= T:
             raise ValueError('Camera window is outside the simulation window')
         seg = pos[:, lo:hi + 1]
         d = np.hypot(seg[..., 0] - r, seg[..., 1] - c).min(1) * cell
         return np.where(d <= clue.get('range_m', cp.camera_range_m), clue.get('miss_rate', cp.camera_miss), 1.0)
+=======
+        lo, hi = [int(np.clip(to_minute(x, start_hhmm), 0, T)) for x in clue["window"]]
+        d = masked_min_dist(lo, hi)
+        return np.where(d <= cp.camera_range_m, cp.camera_miss, 1.0)
+>>>>>>> 7f73fe6 (Final: restart from sighting, benchmark on 999 cases)
 
     if clue["type"] == "area_searched":
         t = clue.get("time")
@@ -70,7 +85,11 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
         if not 0 <= m <= T:
             raise ValueError('Search completion is outside the simulation window')
         d = np.hypot(pos[:, m, 0] - r, pos[:, m, 1] - c) * cell
+<<<<<<< HEAD
         return np.where(d <= clue.get("radius_m", 150), 1 - clue.get('pod', cp.pod), 1.0)
+=======
+        return np.where((d <= clue.get("radius_m", 150)) & (born <= m), 1 - cp.pod, 1.0)
+>>>>>>> 7f73fe6 (Final: restart from sighting, benchmark on 999 cases)
 
     if clue["type"] == "not_reported":
         t = clue.get("time")
@@ -81,6 +100,7 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
         cc = np.clip(np.rint(pos[:, 1:m + 1, 1]).astype(int), 0, W - 1)
         p_spot = walks.params.get("p_spot", sim.Params().p_spot)
         rate = np.clip(p_spot * traffic[rr, cc], 0, 0.999)
+        rate[np.arange(1, m + 1)[None, :] <= born[:, None]] = 0     # not there yet
         return np.exp(np.log1p(-rate).sum(1))
 
     raise ValueError(f"Unknown clue type: {clue['type']}")
@@ -103,15 +123,107 @@ def resample(walks, w, rng, jitter_cells=1.0):
     shift = rng.normal(0, jitter_cells, (n, 1, 2)).astype(np.float32)
     pos = walks.pos[idx] + shift
     end = np.rint(pos[:, -1]).astype(int)
+    pick = lambda a: None if a is None else a[idx]
     new = sim.Walks(pos=pos, end=end, reason=walks.reason[idx], kind=walks.kind[idx],
                     speed=walks.speed[idx], mobility_min=walks.mobility_min[idx],
                     heading0=walks.heading0[idx], minutes=walks.minutes, start=walks.start,
-                    params=walks.params)
+                    params=walks.params, bounces=pick(walks.bounces), born=pick(walks.born))
     return new, np.ones(n)
 
 
-def heatmap(grid, walks, w, minute=None, smooth_cells=2.0):
-    """Probability per cell (sums to 1) of where the person is at `minute` (default: end)."""
+def relaunch_from_sighting(grid, walks, w, clue, start_hhmm, params=None, n_new=None, seed=0,
+                           cp=None):
+    """
+    A sighting says: he was HERE at THIS time. Reweighting walkers from home is not enough when
+    few of them passed there (far sightings). So we also launch new walkers from the sighting
+    point, with the same calibrated rules, heading the way he was going (last seen -> sighting),
+    and only the walking time he has left. (Particle-filter "rejuvenation".)
+
+    Result = reliability x (walkers that fit the sighting: old ones that passed there + new ones,
+                            pooled by how many effective walkers each group has)
+           + (1 - reliability) x (old walkers with their weights before this clue: witness wrong)
+    """
+    cp = cp or ClueParams()
+    p = params or sim.Params(**walks.params)
+    cell = float(grid["cell"])
+    T = walks.minutes
+    t = to_minute(clue["time"], start_hhmm)
+    if t <= 0 or t >= T - 1:
+        return walks, w * clue_likelihood(grid, walks, clue, start_hhmm, cp)
+    rel = clue.get("reliability", cp.reliability)
+    n_new = n_new or max(len(w) // 2, 1000)
+    r, c = G.latlon_to_cell(grid, clue["lat"], clue["lon"])
+    r0, c0 = walks.start
+    head = float(np.degrees(np.arctan2(c - c0, -(r - r0))) % 360) if (r, c) != (r0, c0) else None
+
+    nw = sim.simulate(grid, (r, c), n=n_new, params=p, minutes=T - t, heading=head,
+                      heading_sd=30.0, seed=seed, spotting=False, walked_min=float(t))
+    rng = np.random.default_rng(seed)
+    # the witness place is uncertain: shift each new path by the sighting error
+    shift = rng.normal(0, cp.sighting_err_m / cell, (n_new, 1, 2)).astype(np.float32)
+    pos_new = np.empty((n_new, T + 1, 2), dtype=np.float32)
+    pos_new[:, t:] = nw.pos + shift
+    pos_new[:, :t] = pos_new[:, t:t + 1]          # unknown before the sighting
+    H, W = grid["cls"].shape
+    end_new = np.clip(np.rint(pos_new[:, -1]).astype(int), 0, [H - 1, W - 1])
+
+    # old walkers that fit the sighting (the "witness right" part of the usual clue)
+    tt = int(t)
+    lo, hi = int(max(0, tt - cp.sighting_window_min)), int(min(T, tt + cp.sighting_window_min))
+    seg = walks.pos[:, lo:hi + 1]
+    d = np.hypot(seg[..., 0] - r, seg[..., 1] - c).min(1) * cell
+    fit = w * np.exp(-d ** 2 / (2 * cp.sighting_err_m ** 2))
+    prior = w / w.sum()
+    ess_fit = ess(fit) if fit.sum() > 0 else 0.0
+    share_new = n_new / (n_new + ess_fit)
+    w_old = (1 - rel) * prior + (rel * (1 - share_new) * fit / fit.sum() if fit.sum() > 0 else 0)
+    w_new = np.full(n_new, rel * share_new / n_new)
+
+    cat = lambda a, b: None if a is None or b is None else np.concatenate([a, b])
+    born_old = walks.born if walks.born is not None else np.zeros(len(w), dtype=np.int32)
+    out = sim.Walks(pos=np.concatenate([walks.pos, pos_new]), end=np.concatenate([walks.end, end_new]),
+                    reason=np.concatenate([walks.reason, nw.reason]), kind=np.concatenate([walks.kind, nw.kind]),
+                    speed=np.concatenate([walks.speed, nw.speed]),
+                    mobility_min=np.concatenate([walks.mobility_min, nw.mobility_min + t]),
+                    heading0=np.concatenate([walks.heading0, nw.heading0]), minutes=T,
+                    start=walks.start, params=walks.params, bounces=cat(walks.bounces, nw.bounces),
+                    born=np.concatenate([born_old, np.full(n_new, tt, dtype=np.int32)]))
+    return out, np.concatenate([w_old, w_new])
+
+
+def apply_clue(grid, walks, w, clue, start_hhmm, params=None, seed=0, rng=None):
+    """
+    One call per clue for the app. Sightings restart walkers from the sighting place;
+    other clues reweight. Resamples when too few walkers carry the weight.
+    Returns (walks, w).
+    """
+    if clue["type"] == "sighting" and clue.get("time"):
+        walks, w = relaunch_from_sighting(grid, walks, w, clue, start_hhmm, params, seed=seed)
+    else:
+        w = w * clue_likelihood(grid, walks, clue, start_hhmm)
+    if ess(w) < len(w) / 2:
+        walks, w = resample(walks, w, rng or np.random.default_rng(seed))
+    return walks, w / w.mean()
+
+
+def ring_prior(grid, center):
+    """ISRID distance rings around `center` (row, col): probability per cell, sums to 1."""
+    H, W = grid["cls"].shape
+    rr, cc = np.ogrid[0:H, 0:W]
+    d = np.maximum(np.hypot(rr - center[0], cc - center[1]) * float(grid["cell"]) / 1000, 0.02)
+    f = np.exp(-(np.log(d) - sim.DIST_MU) ** 2 / (2 * sim.DIST_SIGMA ** 2)) / (d * sim.DIST_SIGMA)
+    prior = f / d
+    prior[np.isin(grid["cls"], [G.OUTSIDE, G.BUILDING, G.BARRIER])] = 0
+    return prior / prior.sum()
+
+
+def heatmap(grid, walks, w, minute=None, smooth_cells=2.0, floor=0.05, center=None):
+    """
+    Probability per cell (sums to 1) of where the person is at `minute` (default: end).
+    floor: share given to ISRID distance rings around `center` (default: last seen place;
+    after a sighting, pass the sighting place). Walkers never cover every cell, so no place
+    is ever zero, and where walkers did not go the map falls back to rings, like a searcher.
+    """
     H, W = grid["cls"].shape
     m = walks.minutes if minute is None else minute
     rr = np.clip(np.rint(walks.pos[:, m, 0]).astype(int), 0, H - 1)
@@ -128,10 +240,19 @@ def heatmap(grid, walks, w, minute=None, smooth_cells=2.0):
         padded = np.pad(heat, ((0, 0), (radius, radius)), mode='reflect')
         heat = sum(kernel[i] * padded[:, i:i + W] for i in range(len(kernel)))
     heat[grid["cls"] == G.OUTSIDE] = 0
+<<<<<<< HEAD
     total = heat.sum()
     if total <= 0:
         raise ValueError('No walker probability remains within the Amherst grid')
     return heat / total
+=======
+    blocked = np.isin(grid["cls"], [G.BUILDING, G.BARRIER])
+    heat[blocked] = 0
+    heat /= heat.sum()
+    if floor > 0:
+        heat = (1 - floor) * heat + floor * ring_prior(grid, center or walks.start)
+    return heat
+>>>>>>> 7f73fe6 (Final: restart from sighting, benchmark on 999 cases)
 
 
 def truth_rank(grid, heat, truth_rc, radius_cells=3):
@@ -160,12 +281,13 @@ def run_demo(n=20000, seed=7, minutes=240):
     walks = sim.simulate(grid, start, n=n, minutes=minutes, seed=seed, params=params, spotting=False)
     w = np.ones(n)
     stages = []
+    center = [start]
 
     def record(label):
-        heat = heatmap(grid, walks, w, minute=now)
+        heat = heatmap(grid, walks, w, minute=now, center=center[0])
         area, mass = truth_rank(grid, heat, truth)
         stages.append((label, heat))
-        print(f"{label:<34} search area to reach truth: {area:6.2f} km2   "
+        print(f"{label:<34} search area to reach truth: {area:7.3f} km2   "
               f"({mass * 100:4.1f}% of probability)   walkers that count: {ess(w):7.0f}")
 
     print(f"{n} walkers. Map shows where Walter is likely at 21:00.\n")
@@ -174,9 +296,9 @@ def run_demo(n=20000, seed=7, minutes=240):
         clue = dict(clue)
         if clue["type"] == "area_searched" and "time" not in clue:
             clue["time"] = clue.get("entered_at", "21:00")
-        w = w * clue_likelihood(grid, walks, clue, start_hhmm)
-        if ess(w) < n / 2:
-            walks, w = resample(walks, w, rng)
+        walks, w = apply_clue(grid, walks, w, clue, start_hhmm, params, seed=seed, rng=rng)
+        if clue["type"] == "sighting":
+            center[0] = G.latlon_to_cell(grid, clue["lat"], clue["lon"])
         record(f"After clue {clue['id']} ({clue['type']})")
     w = w * clue_likelihood(grid, walks, {"type": "not_reported", "time": "21:00"}, start_hhmm)
     record("Still missing (not reported)")

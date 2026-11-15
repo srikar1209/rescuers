@@ -79,10 +79,16 @@ MOBILITY_P = np.array([0.00, 0.25, 0.50, 0.75, 0.95, 1.00])
 MOBILITY_H = np.array([0.005, 0.033, 0.25, 3.8, 18.0, 24.0])
 
 # Stop reasons
-ACTIVE, STUCK, STRUCTURE, IN_WATER, TIRED, GOAL, LEFT_MAP, OUT_OF_TIME, SPOTTED = range(9)
+ACTIVE, STUCK, STRUCTURE, IN_WATER, TIRED, GOAL, LEFT_MAP, OUT_OF_TIME, SPOTTED, TRAPPED = range(10)
 REASONS = ["active", "stuck in terrain", "stopped at building", "in water",
            "mobility time over", "reached goal", "left map", "simulation time over",
-           "spotted by public"]
+           "spotted by public", "trapped (boxed in)"]
+TRAP_BOUNCES = 50   # this many blocked turns in a row without a step = boxed in, stops there
+
+# ISRID temperate dementia distance (DATA): lognormal through 25/50/75% = 0.3 / 1.0 / 2.4 km.
+# Used for the fallback rings in infer.heatmap and by the benchmark.
+DIST_MU = np.log(1.0)
+DIST_SIGMA = np.log(2.4 / 0.3) / (2 * 0.6745)
 
 BLOCKED = {G.BUILDING, G.BARRIER, G.OUTSIDE}
 
@@ -141,6 +147,7 @@ class Walks:
     start: tuple
     params: dict = field(default_factory=dict)
     bounces: np.ndarray = None  # (n,) times the walker was fully blocked and turned (diagnostics)
+    born: np.ndarray = None     # (n,) minute the walker starts to count (0, or a sighting time)
 
 
 PARAMS_FILE = "data/calibrated_params.json"
@@ -161,9 +168,19 @@ def load_params(path=PARAMS_FILE, verbose=True):
         return Params()
 
 
-def sample_walk_minutes(rng, n, p):
-    """Lognormal walking time in minutes (see Params.walk_median_min)."""
-    return np.exp(np.log(p.walk_median_min) + p.walk_sigma * rng.standard_normal(n))
+def sample_walk_minutes(rng, n, p, walked_min=0.0):
+    """
+    Lognormal walking time in minutes (see Params.walk_median_min).
+    walked_min > 0: the person was still walking after walked_min minutes (a sighting), so draw
+    from the part of the curve above walked_min and return the time LEFT.
+    """
+    mu, sg = np.log(p.walk_median_min), p.walk_sigma
+    if walked_min <= 0:
+        return np.exp(mu + sg * rng.standard_normal(n))
+    from scipy.special import ndtr, ndtri
+    lo = ndtr((np.log(walked_min) - mu) / sg)
+    u = np.clip(lo + (1 - lo) * rng.random(n), 1e-12, 1 - 1e-12)
+    return np.maximum(np.exp(mu + sg * ndtri(u)) - walked_min, 1.0)
 
 
 def sample_mobility_minutes(rng, n):
@@ -174,12 +191,13 @@ def sample_mobility_minutes(rng, n):
 
 
 def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
-             heading_sd=30.0, goal=None, seed=42, spotting=True):
+             heading_sd=30.0, goal=None, seed=42, spotting=True, walked_min=0.0):
     """
     grid     from grid.load()
     start    (row, col) of the last seen point
     heading  known exit direction in degrees (0 = north, 90 = east), or None for random
     goal     (row, col) of a former home or favorite place, or None
+    walked_min  minutes already walked before `start` (used when restarting from a sighting)
     spotting True for calibration (people seen on roads are found there). The app uses False,
              because the person is still missing; it applies the "not_reported" clue instead.
     """
@@ -197,7 +215,7 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
     shares = shares / shares.sum()
     kind = rng.choice(3, size=n, p=shares)
     speed = np.clip(rng.normal(p.speed_mean, p.speed_sd, n), p.speed_min, p.speed_max)
-    mobility_s = sample_walk_minutes(rng, n, p) * 60.0
+    mobility_s = sample_walk_minutes(rng, n, p, walked_min) * 60.0
     if heading is None:
         head = rng.uniform(0, 360, n)
     else:
@@ -217,6 +235,7 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
     rec[:, 0] = pos
     last_min = np.zeros(n, dtype=int)
     bounces = np.zeros(n, dtype=np.int32)
+    in_a_row = np.zeros(n, dtype=np.int32)       # blocked turns in a row
     t_max = minutes * 60.0
 
     offsets = np.radians(np.array([-45.0, 0.0, 45.0]))
@@ -281,12 +300,15 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         if dead.any():
             ia = act[dead]
             bounces[ia] += 1
+            in_a_row[ia] += 1
             out_any = (k[dead] == G.OUTSIDE).any(1)
             bld_any = (k[dead] == G.BUILDING).any(1)
             left_home = np.hypot(pos[ia, 0] - start[0], pos[ia, 1] - start[1]) * cell >= p.struct_min_m
             stop_b = bld_any & left_home & (rng.random(dead.sum()) < p.p_struct)
             reason[ia[out_any]] = LEFT_MAP
             reason[ia[~out_any & stop_b]] = STRUCTURE
+            boxed = (in_a_row[ia] >= TRAP_BOUNCES) & (reason[ia] == ACTIVE)
+            reason[ia[boxed]] = TRAPPED
             turn = rng.uniform(30, 90, dead.sum()) * rng.choice([-1, 1], dead.sum())
             head[ia] = (head[ia] + turn) % 360                     # ping-pong, never straight back
             t[ia] += 5.0
@@ -295,6 +317,7 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
         if not mv.any():
             continue
         ia = act[mv]
+        in_a_row[ia] = 0
         wm = w[mv] / w[mv].sum(1, keepdims=True)
         choice = (rng.random(mv.sum())[:, None] > wm.cumsum(1)).sum(1)
         choice = np.minimum(choice, 2)
@@ -378,7 +401,8 @@ def simulate(grid, start, n=5000, params=None, minutes=240, heading=None,
 
     return Walks(pos=rec, end=np.rint(pos).astype(int), reason=reason, kind=kind,
                  speed=speed, mobility_min=mobility_s / 60, heading0=heading0,
-                 minutes=minutes, start=tuple(start), params=asdict(p), bounces=bounces)
+                 minutes=minutes, start=tuple(start), params=asdict(p), bounces=bounces,
+                 born=np.zeros(n, dtype=np.int32))
 
 
 # ---------------- statistics vs ISRID ----------------
