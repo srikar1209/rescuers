@@ -8,6 +8,7 @@ import argparse
 import io
 import json
 import math
+import os
 import re
 import threading
 import time
@@ -324,7 +325,13 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/features':
             self.features()
             return
-        super().do_GET()
+        static = {'/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+                  '/styles.css': ('styles.css', 'text/css; charset=utf-8')}
+        if url.path in static:
+            filename, content_type = static[url.path]
+            self.send_data((ROOT / filename).read_bytes(), content_type)
+            return
+        self.send_json({'error': 'Unknown endpoint'}, 404)
 
     def heat_tile(self, run, z, x, y, minute):
         import numpy as np
@@ -511,8 +518,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--port', type=int, default=8001)
+    parser.add_argument('--host', default=os.environ.get('HOST', '127.0.0.1'))
+    parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', '8001')))
     args = parser.parse_args()
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
-    print(f'Open http://127.0.0.1:{args.port}/ (serving {ROOT})', flush=True)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f'Serving {ROOT} on {args.host}:{args.port}', flush=True)
     server.serve_forever()

@@ -9,7 +9,7 @@ From the repository root, use Python 3.12 or another supported Python 3 version:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install numpy Pillow
+python -m pip install -r requirements-ui.txt
 python ui/serve.py --port 8002
 ```
 
