@@ -177,10 +177,12 @@ def sample_walk_minutes(rng, n, p, walked_min=0.0):
     mu, sg = np.log(p.walk_median_min), p.walk_sigma
     if walked_min <= 0:
         return np.exp(mu + sg * rng.standard_normal(n))
-    from scipy.special import ndtr, ndtri
-    lo = ndtr((np.log(walked_min) - mu) / sg)
+    from statistics import NormalDist      # standard library: works in the UI without SciPy
+    nd = NormalDist()
+    lo = nd.cdf((np.log(walked_min) - mu) / sg)
     u = np.clip(lo + (1 - lo) * rng.random(n), 1e-12, 1 - 1e-12)
-    return np.maximum(np.exp(mu + sg * ndtri(u)) - walked_min, 1.0)
+    z = np.array([nd.inv_cdf(float(x)) for x in u])
+    return np.maximum(np.exp(mu + sg * z) - walked_min, 1.0)
 
 
 def sample_mobility_minutes(rng, n):

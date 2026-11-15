@@ -35,7 +35,7 @@ class ClueParams:
 def to_minute(hhmm, start_hhmm):
     h, m = map(int, hhmm.split(":"))
     h0, m0 = map(int, start_hhmm.split(":"))
-    return ((h * 60 + m) - (h0 * 60 + m0)) % (24 * 60)
+    return ((h * 60 + m) - (h0 * 60 + m0)) % (24 * 60)   # works across midnight
 
 
 def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
@@ -59,37 +59,28 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
     if clue["type"] == "sighting":
         t = to_minute(clue["time"], start_hhmm)
         if not 0 <= t <= T:
-            raise ValueError('Sighting is outside the simulation window')
+            raise ValueError("Sighting is outside the simulation window")
         lo, hi = int(max(0, t - cp.sighting_window_min)), int(min(T, t + cp.sighting_window_min))
         d = masked_min_dist(lo, hi)
         rel = clue.get("reliability", cp.reliability)     # per clue, from the LLM (high/medium/low)
         return rel * np.exp(-d ** 2 / (2 * cp.sighting_err_m ** 2)) + (1 - rel) * 0.05
 
     if clue["type"] == "camera_negative":
-<<<<<<< HEAD
         lo, hi = [to_minute(x, start_hhmm) for x in clue["window"]]
         if not 0 <= lo <= hi <= T:
-            raise ValueError('Camera window is outside the simulation window')
-        seg = pos[:, lo:hi + 1]
-        d = np.hypot(seg[..., 0] - r, seg[..., 1] - c).min(1) * cell
-        return np.where(d <= clue.get('range_m', cp.camera_range_m), clue.get('miss_rate', cp.camera_miss), 1.0)
-=======
-        lo, hi = [int(np.clip(to_minute(x, start_hhmm), 0, T)) for x in clue["window"]]
+            raise ValueError("Camera window is outside the simulation window")
         d = masked_min_dist(lo, hi)
-        return np.where(d <= cp.camera_range_m, cp.camera_miss, 1.0)
->>>>>>> 7f73fe6 (Final: restart from sighting, benchmark on 999 cases)
+        return np.where(d <= clue.get("range_m", cp.camera_range_m),
+                        clue.get("miss_rate", cp.camera_miss), 1.0)
 
     if clue["type"] == "area_searched":
         t = clue.get("time")
         m = T if t is None else to_minute(t, start_hhmm)
         if not 0 <= m <= T:
-            raise ValueError('Search completion is outside the simulation window')
+            raise ValueError("Search completion is outside the simulation window")
         d = np.hypot(pos[:, m, 0] - r, pos[:, m, 1] - c) * cell
-<<<<<<< HEAD
-        return np.where(d <= clue.get("radius_m", 150), 1 - clue.get('pod', cp.pod), 1.0)
-=======
-        return np.where((d <= clue.get("radius_m", 150)) & (born <= m), 1 - cp.pod, 1.0)
->>>>>>> 7f73fe6 (Final: restart from sighting, benchmark on 999 cases)
+        return np.where((d <= clue.get("radius_m", 150)) & (born <= m),
+                        1 - clue.get("pod", cp.pod), 1.0)
 
     if clue["type"] == "not_reported":
         t = clue.get("time")
@@ -230,29 +221,24 @@ def heatmap(grid, walks, w, minute=None, smooth_cells=2.0, floor=0.05, center=No
     cc = np.clip(np.rint(walks.pos[:, m, 1]).astype(int), 0, W - 1)
     heat = np.zeros((H, W), dtype=np.float32)
     np.add.at(heat, (rr, cc), w)
-    if smooth_cells > 0:
+    if smooth_cells > 0:          # Gaussian blur in plain NumPy (no SciPy needed in the UI)
         radius = max(1, int(np.ceil(3 * smooth_cells)))
         axis = np.arange(-radius, radius + 1)
         kernel = np.exp(-0.5 * (axis / smooth_cells) ** 2)
         kernel /= kernel.sum()
-        padded = np.pad(heat, ((radius, radius), (0, 0)), mode='reflect')
+        padded = np.pad(heat, ((radius, radius), (0, 0)), mode="reflect")
         heat = sum(kernel[i] * padded[i:i + H] for i in range(len(kernel)))
-        padded = np.pad(heat, ((0, 0), (radius, radius)), mode='reflect')
+        padded = np.pad(heat, ((0, 0), (radius, radius)), mode="reflect")
         heat = sum(kernel[i] * padded[:, i:i + W] for i in range(len(kernel)))
     heat[grid["cls"] == G.OUTSIDE] = 0
-<<<<<<< HEAD
+    heat[np.isin(grid["cls"], [G.BUILDING, G.BARRIER])] = 0   # kept: the benchmark was run this way
     total = heat.sum()
     if total <= 0:
-        raise ValueError('No walker probability remains within the Amherst grid')
-    return heat / total
-=======
-    blocked = np.isin(grid["cls"], [G.BUILDING, G.BARRIER])
-    heat[blocked] = 0
-    heat /= heat.sum()
+        raise ValueError("No walker probability remains within the Amherst grid")
+    heat = heat / total
     if floor > 0:
         heat = (1 - floor) * heat + floor * ring_prior(grid, center or walks.start)
     return heat
->>>>>>> 7f73fe6 (Final: restart from sighting, benchmark on 999 cases)
 
 
 def truth_rank(grid, heat, truth_rc, radius_cells=3):
