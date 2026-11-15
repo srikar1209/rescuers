@@ -28,11 +28,11 @@ Scope: people with dementia, on foot, in Amherst, MA.
 
 ### Calibration
 
-The error score against the 16 ISRID statistics dropped from 9.9 (default rules) to 3.8. Distances (25/50/75% = 0.4/1.0/2.5 km vs ISRID 0.3/1.0/2.4), road, structure, and forest finds match. See `calibration_report.md`.
+The error score against the 16 ISRID statistics dropped from 9.9 (default rules) to 3.8. Distances (25/50/75% = 0.4/1.0/2.5 km vs ISRID 0.3/1.0/2.4), road, structure, and forest finds match. See `reports/calibration_report.md`.
 
 ### Benchmark (999 held-out cases)
 
-The true location is placed only from ISRID statistics, never by our own walkers. Score = area searched before reaching the person, most likely cells first. See `benchmark_report.md` and `benchmark.png`.
+The true location is placed only from ISRID statistics, never by our own walkers. Score = area searched before reaching the person, most likely cells first. See `reports/benchmark_report.md` and `images/benchmark.png`.
 
 | | Circle search | Sim2Find |
 |---|---|---|
@@ -43,7 +43,7 @@ The true location is placed only from ISRID statistics, never by our own walkers
 
 ### Sensitivity Analysis
 
-Each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See `sensitivity_report.md`.
+Each rule number changed by ±50% (DATA values ±20%). Only 3 of 22 numbers move the fit much, and each is pinned by its own ISRID statistic. See `reports/sensitivity_report.md`.
 
 ## Limitations
 
@@ -60,6 +60,9 @@ Next step: test it against real solved cases with a search team.
 rescuers/
   data/            committed Amherst grid, calibrated rules, demo case; raw rasters ignored by git
   scripts/         data download and map viewing scripts
+  docs/            APP_GUIDE.md: how the app calls the model
+  images/          figures for the README and Devpost
+  reports/         calibration, benchmark, and sensitivity reports
   rescuers/
     grid.py        builds the 10 m grid (+ road traffic layer)
     sim.py         the walkers (agent-based model)
