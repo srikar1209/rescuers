@@ -25,7 +25,7 @@ The UI needs the tracked `data/grid.npz` and `data/calibrated_params.json`. You 
 
 ## Try the fictional demo
 
-1. In **Case details**, click **Autofill demo data**. Review the fictional case, then click **Run 5,000 walkers**. The matching demo uses the baked paths and timeline.
+1. In **Case details**, click **Autofill demo data**. Review the fictional case, then click **Simulate**. The matching demo uses the baked paths and timeline.
 2. Wait for **Search priorities** and the yellow-to-red heatmap to appear. Red is higher relative concentration; the soft red patches are sampled simulated positions, not sightings. Hide the patches with **Simulated positions** to inspect the heatmap alone.
 3. Add the demo clues in order from the results panel. Each accepted clue reweights the original 5,000 paths and updates the map.
 4. After all three clues, use **Reveal fictional outcome**. That outcome is kept out of simulation and clue weighting.
@@ -37,7 +37,7 @@ The top three priority areas are display groupings around strong heatmap peaks, 
 1. Enter **Last seen** and **Estimate as of** in local Amherst time, no more than four hours apart.
 2. Click **Set last-seen point on map**, then click a point inside the Amherst study area. Latitude, longitude, and an editable place description fill in. You can also type coordinates.
 3. Optionally choose a departure direction and pin a possible goal. A goal name without a pin is context only. Age and condition are recorded as context and do not change the walker rules.
-4. Click **Run 5,000 walkers**. The map focuses on the last-seen point and then the probability estimate. A run may take a little while. Changing starting inputs requires another run.
+4. Click **Simulate**. The map focuses on the last-seen point and then the probability estimate. A run may take a little while. Changing starting inputs requires another run.
 
 Use **Case details** to reopen the form after a run. Drag to pan, scroll or use `+`/`−` to zoom, and use **Focus estimate** to return to the probability area. The collapsed **Location estimate** control at the bottom opens a time slider. It changes the displayed minute within the run; it does not rerun walkers. The app stores walker paths but computes heatmaps for selected minutes on demand; the slider waits briefly for dragging to settle before requesting a new minute.
 
@@ -57,14 +57,14 @@ export GEMINI_API_KEY
 python ui/serve.py --port 8002
 ```
 
-`GEMINI_MODEL` overrides the default `gemini-3.5-flash-lite`. Existing `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` settings provide an alternative when Gemini is not configured. Never commit keys. Click **Extract clue details with AI**, review the draft, complete any missing coordinates, times, or radius, and then click **Accept and update map**. Extraction alone does not update probabilities. The extractor does not geocode place names.
+`GEMINI_MODEL` overrides the default `gemini-3.5-flash-lite`. Existing `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` settings provide an alternative when Gemini is not configured. Never commit keys. Open **Add a clue**, choose the evidence type, describe the report, and use **Extract and continue**. The guided chat asks for any missing coordinates, times, or radius before the final review. Explicit times such as `9:00pm` are also converted locally to `21:00` if AI extraction fails or omits them; ambiguous times are left for review. Extraction alone does not update probabilities. The extractor does not geocode place names.
 
 ## What the code does
 
 | File | Role |
 | --- | --- |
 | `index.html`, `styles.css` | Case form, map layout, clue dialog, light and dark appearance |
-| `app.js` | Browser state, map drawing, heatmap overlay, pins, evidence controls |
+| `app.js`, `clue_chat.js` | Browser state, map drawing, heatmap overlay, pins, and guided clue entry |
 | `serve.py` | Local HTTP server, terrain and probability tiles, API routes, nearby OSM name lookup |
 | `model_service.py` | Run lifecycle, case validation, simulator and inference calls, priority-area summaries, optional LLM extraction |
 | `../rescuers/sim.py` | Walker simulation with calibrated parameters |

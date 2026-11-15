@@ -13,7 +13,7 @@ const COLORS = [
 const state = {
   center: geoToWorld(DEFAULT_CENTER), zoom: 14.25, pick: null, drag: null,
   run: null, case: null, evidence: [], notes: [], demoClues: [], revealed: null, minute: 150, version: 0,
-  summaryRequest: 0, suggestedPlaces: [], showWalkerDots: true
+  summaryRequest: 0, suggestedPlaces: [], suggestedPlacesAt: null, showWalkerDots: true
 };
 const baseTiles = new Map();
 const streetTiles = new Map();
@@ -150,6 +150,7 @@ function openClueDialog() {
     clueOpener = fromCaseDrawer ? $('menuButton') : document.activeElement;
     $('clueDialog').showModal();
   }
+  clueChatAfterPin();
 }
 $('menuButton').onclick = openClueDialog;
 $('openClueButton').onclick = openClueDialog;
@@ -162,6 +163,7 @@ $('clueDialog').addEventListener('click', e => {
     $('clueDialog').close();
 });
 $('clueDialog').addEventListener('close', () => {
+  if (!reopenClueAfterPin && state.editingId) resetClueChat();
   if (!reopenClueAfterPin) (clueOpener?.isConnected ? clueOpener : $('menuButton')).focus();
 });
 function geoToWorld(p) {
@@ -644,6 +646,7 @@ async function runCase(event) {
     state.circle80 = null;
     state.selectedPlace = null;
     state.suggestedPlaces = [];
+    state.suggestedPlacesAt = null;
     $('placeDetail').hidden = true;
     $('placeList').replaceChildren();
     $('placeListStatus').hidden = true;
@@ -722,6 +725,7 @@ $('caseForm').addEventListener('input', event => {
   setCaseCollapsed(false);
   state.circle80 = null; state.selectedPlace = null; $('placeDetail').hidden = true;
   state.suggestedPlaces = [];
+  state.suggestedPlacesAt = null;
   $('addEvidence').disabled = true;
   $('clueRunHint').textContent = 'You can draft a clue now. Run the walkers before applying it to the heatmap.';
   $('evidenceSection').hidden = true; $('resultsPanel').hidden = true; $('timeline').hidden = true;
@@ -790,6 +794,8 @@ function editEvidence(item) {
   }
   state.editingId = item.id;
   $('addEvidence').firstChild.textContent = 'Save evidence ';
+  clueChatSelectedArea = null;
+  clueChatStep = 'review';
   openClueDialog();
 }
 function showKindFields() {
@@ -837,7 +843,7 @@ async function replaceEvidence(items, focusPoint = null) {
     const message = 'Estimate updated from ' + state.evidence.length + ' accepted clue(s).' + change;
     status('evidenceStatus', message);
     status('runStatus', message);
-    if ($('clueDialog').open) $('clueDialog').close();
+    if ($('clueDialog').open) { resetClueChat(); $('clueDialog').close(); }
     if (focusPoint) animateCamera(geoToWorld(focusPoint), Math.max(state.zoom, 15.6));
   } catch (error) {
     status('evidenceStatus', error.message, true);
@@ -926,6 +932,7 @@ async function updateSummary() {
     $('placeDetail').hidden = true;
     const places = Array.isArray(result.areas) ? result.areas.slice(0, 3) : [];
     state.suggestedPlaces = places;
+    state.suggestedPlacesAt = {runId, minute: result.minute, version: result.version};
     const list = $('placeList'); list.replaceChildren();
     places.forEach((place, index) => {
       const li = document.createElement('li'), number = document.createElement('b'), button = document.createElement('button');
@@ -1085,7 +1092,7 @@ $('demoButton').onclick = async () => {
     $('startLat').dispatchEvent(new Event('input', {bubbles: true}));
     state.demoClues = demo.clues;
     setCaseCollapsed(false);
-    status('runStatus', 'Demo fields filled. Review them, then run the 5,000 walkers.');
+    status('runStatus', '');
   } catch (error) { status('runStatus', error.message, true); }
 };
 showKindFields();

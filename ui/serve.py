@@ -348,6 +348,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.features()
             return
         static = {'/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+                  '/clue_chat.js': ('clue_chat.js', 'text/javascript; charset=utf-8'),
                   '/styles.css': ('styles.css', 'text/css; charset=utf-8')}
         if url.path in static:
             filename, content_type = static[url.path]

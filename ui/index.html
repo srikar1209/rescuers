@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
   <link rel="icon" href="data:,">
-  <title>Amherst · Rescuers</title>
+  <title>Amherst · Sim2Find</title>
   <script>try { if (localStorage.getItem('rescuers-theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch { /* Keep the light default. */ }</script>
-  <link rel="stylesheet" href="./styles.css?v=23">
+  <link rel="stylesheet" href="./styles.css?v=27">
 </head>
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="identity"><span class="identity-mark" aria-hidden="true">✳</span><span>rescuers<span class="identity-period">.</span></span></div>
+      <div class="identity"><span class="identity-mark" aria-hidden="true">✳</span><span>sim2find<span class="identity-period">.</span></span></div>
       <div class="top-location">AMHERST, MASSACHUSETTS</div>
-      <div class="top-actions"><button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 15.8A8.6 8.6 0 0 1 8.2 3.5 8.6 8.6 0 1 0 20.5 15.8Z"/></svg><svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></button><button id="caseToggle" class="case-toggle" type="button" aria-controls="casePanel" aria-expanded="false" hidden>Case details</button><button id="menuButton" class="menu-button" type="button" aria-label="Open clues and LLM tools" aria-haspopup="dialog" aria-controls="clueDialog"><span class="menu-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="menu-label">Clues + LLM</span></button></div>
+      <div class="top-actions"><button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 15.8A8.6 8.6 0 0 1 8.2 3.5 8.6 8.6 0 1 0 20.5 15.8Z"/></svg><svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></button><button id="caseToggle" class="case-toggle" type="button" aria-controls="casePanel" aria-expanded="false" hidden>Case details</button><button id="menuButton" class="menu-button" type="button" aria-label="Open guided clue chat" aria-haspopup="dialog" aria-controls="clueDialog"><span class="menu-icon" aria-hidden="true"><i></i><i></i><i></i></span><span class="menu-label">Add a clue</span></button></div>
     </header>
     <main class="workspace">
       <button id="caseBackdrop" class="case-backdrop" type="button" aria-label="Close case details" hidden></button>
@@ -24,18 +24,18 @@
         <button id="demoButton" class="demo-fill" type="button">Autofill demo data <span aria-hidden="true">↗</span></button>
         <form id="caseForm">
           <div class="field-group">
-            <label for="personName">Person <span class="optional">optional · context only</span></label>
+            <label for="personName">Person</label>
             <input id="personName" type="text" maxlength="80" placeholder="Name or case label">
-            <div class="field-row"><div><label for="personAge">Age <span class="optional">context</span></label><input id="personAge" type="number" min="1" max="120" placeholder="—"></div><div><label for="personCondition">Condition <span class="optional">context</span></label><input id="personCondition" type="text" maxlength="100" placeholder="e.g. moderate dementia"></div></div>
+            <div class="field-row"><div><label for="personAge">Age</label><input id="personAge" type="number" min="1" max="120" placeholder="—"></div><div><label for="personCondition">Dementia severity</label><select id="personCondition"><option value="">Unknown</option><option value="mild dementia">Mild</option><option value="moderate dementia">Moderate</option><option value="severe dementia">Severe</option></select></div></div>
           </div>
           <div class="field-group">
-            <div class="field-row time-row"><div><label for="lastSeenTime">Last seen <span class="required">required</span></label><input id="lastSeenTime" type="time" required><span class="field-help">Local Amherst time</span></div><div><label for="analysisTime">Estimate as of <span class="required">required</span></label><input id="analysisTime" type="time" required><span class="field-help">Within 4 hours</span></div></div>
+            <div class="field-row time-row"><div><label for="lastSeenTime">Last seen <span class="required-mark" aria-hidden="true">*</span></label><input id="lastSeenTime" type="time" required><span class="field-help">Local Amherst time</span></div><div><label for="analysisTime">Estimate as of <span class="required-mark" aria-hidden="true">*</span></label><input id="analysisTime" type="time" required><span class="field-help">Within 4 hours</span></div></div>
             <button id="pickStart" class="pin-button" type="button" data-pin="start">Set last-seen point on map <span>↗</span></button>
-            <div class="coordinate-row"><label>Latitude<input id="startLat" type="number" step="any" required placeholder="42.37023"></label><label>Longitude<input id="startLon" type="number" step="any" required placeholder="-72.53007"></label></div>
-            <label for="startLabel">Place description <span class="optional">editable</span></label><input id="startLabel" type="text" maxlength="120" placeholder="Filled from the map pin; you can edit it">
+            <div class="coordinate-row"><label>Latitude <span class="required-mark" aria-hidden="true">*</span><input id="startLat" type="number" step="any" required placeholder="42.37023"></label><label>Longitude <span class="required-mark" aria-hidden="true">*</span><input id="startLon" type="number" step="any" required placeholder="-72.53007"></label></div>
+            <label for="startLabel">Place description</label><input id="startLabel" type="text" maxlength="120" placeholder="Filled from the map pin; you can edit it">
           </div>
-            <div class="field-group"><span class="group-label">Optional starting clues</span><div class="field-row"><div><label for="heading">Departure direction</label><select id="heading"><option value="">Unknown</option><option value="0">North</option><option value="45">Northeast</option><option value="90">East</option><option value="135">Southeast</option><option value="180">South</option><option value="225">Southwest</option><option value="270">West</option><option value="315">Northwest</option></select></div><div><label for="goalLabel">Possible goal</label><input id="goalLabel" type="text" maxlength="100" placeholder="Old home, church…"></div></div><button id="pickGoal" class="pin-button subtle" type="button" data-pin="goal">Set possible goal on map <span>↗</span></button><div class="coordinate-row"><label>Goal latitude<input id="goalLat" type="number" step="any" placeholder="Optional"></label><label>Goal longitude<input id="goalLon" type="number" step="any" placeholder="Optional"></label></div><p class="field-help">Pin a possible goal to use it in the model. Age and condition are recorded but do not change walker rules.</p></div>
-          <button id="runButton" class="primary-button" type="submit">Run 5,000 walkers <span>→</span></button>
+            <div class="field-group"><span class="group-label">Starting clues</span><div class="field-row"><div><label for="heading">Departure direction</label><select id="heading"><option value="">Unknown</option><option value="0">North</option><option value="45">Northeast</option><option value="90">East</option><option value="135">Southeast</option><option value="180">South</option><option value="225">Southwest</option><option value="270">West</option><option value="315">Northwest</option></select></div><div><label for="goalLabel">Possible goal</label><input id="goalLabel" type="text" maxlength="100" placeholder="Old home, church…"></div></div><button id="pickGoal" class="pin-button subtle" type="button" data-pin="goal">Set possible goal on map <span>↗</span></button><div class="coordinate-row"><label>Goal latitude<input id="goalLat" type="number" step="any" placeholder="—"></label><label>Goal longitude<input id="goalLon" type="number" step="any" placeholder="—"></label></div><p class="field-help">Pin a possible goal to use it in the model. Age and dementia severity are recorded but do not change walker rules.</p></div>
+          <button id="runButton" class="primary-button" type="submit">Simulate <span aria-hidden="true">→</span></button>
           <p id="runStatus" class="form-status" role="status" aria-live="polite">Choose a last-seen point to begin.</p>
         </form>
         <section id="evidenceSection" class="evidence-section" hidden>
@@ -56,7 +56,7 @@
       </section>
       <aside id="resultsPanel" class="results-panel" aria-label="Search estimate" hidden><div class="panel-scroll">
         <h2>Search priorities</h2><p class="section-copy">A probability estimate from the Amherst terrain model, not a confirmed location.</p>
-        <div class="priority-heading"><span>TOP 3 CONCENTRATED AREAS</span><small>Ranked by local heatmap concentration</small></div>
+        <div class="priority-heading"><span>TOP 3 CONCENTRATED AREAS</span></div>
         <ol id="placeList" class="places"></ol>
         <p id="placeListStatus" class="place-list-status" role="status" hidden></p>
         <div id="demoClues" class="demo-clues" hidden></div>
@@ -69,14 +69,15 @@
           <p class="results-note">Search areas lower probability according to the entered detection estimate. They never remove it entirely. Clue values are assumptions until verified.</p>
         </details>
         <p id="essWarning" class="warning" hidden>Few independent paths carry the remaining weight. Treat this estimate cautiously.</p>
-        <div class="legend"><span>LOWER</span><div class="legend-bar"></div><span>HIGHER</span></div><p class="legend-caption">Yellow shows lower concentration; red shows higher concentration. Soft red patches show sampled possible walker positions at the selected time, not sightings. The map updates with accepted clues and the time slider. Zoom in to see small circles around the three strongest peaks.</p>
+        <div class="legend"><span>LOWER</span><div class="legend-bar"></div><span>HIGHER</span></div><p class="legend-caption">Red patches show simulated positions, not sightings. Clues and time update the map. Zoom in for the three search circles.</p>
       </div></aside>
     </main>
   </div>
   <dialog id="clueDialog" class="clue-dialog" aria-labelledby="clueDialogTitle">
-    <div class="dialog-heading"><div><span class="eyebrow">EVIDENCE / AMHERST</span><h2 id="clueDialogTitle">Add a clue.</h2><p>Paste what you heard, extract details with AI, or enter them manually. Review every field before it affects the map.</p></div><button id="closeClueButton" class="dialog-close" type="button" aria-label="Close clue tools">×</button></div>
+    <div class="dialog-heading"><div><span class="eyebrow">EVIDENCE / AMHERST</span><h2 id="clueDialogTitle">Add a clue.</h2><p>One answer at a time. Review the details before they change the map.</p></div><button id="closeClueButton" class="dialog-close" type="button" aria-label="Close clue tools">×</button></div>
           <p id="clueRunHint" class="clue-run-hint">You can draft a clue now. Run the walkers before applying it to the heatmap.</p>
-          <form id="evidenceForm">
+          <div id="clueChat" class="clue-chat"><div class="chat-meta"><span id="chatProgress">TYPE</span><span id="chatMode">GUIDED EVIDENCE</span></div><div id="chatRecap" class="chat-recap"></div><div id="chatTurn" class="chat-turn" aria-live="polite"></div><p id="chatStatus" class="form-status" role="status" aria-live="polite"></p></div>
+          <form id="evidenceForm" hidden>
             <label for="evidenceType">Add evidence</label><select id="evidenceType"><option value="sighting">Sighting</option><option value="camera_negative">Camera showed no match</option><option value="area_searched">Area searched, no find</option></select>
             <label for="evidenceText">Paste a report or clue</label><textarea id="evidenceText" rows="3" maxlength="500" placeholder="For example: A driver saw him near University Drive at 6:45 pm"></textarea>
             <button id="extractButton" class="secondary-button" type="button">Extract clue details with AI</button><button id="saveNote" class="secondary-button" type="button">Keep as note (no map change)</button><span id="extractStatus" class="field-help" role="status"></span>
@@ -91,6 +92,7 @@
             <p id="evidenceStatus" class="form-status" role="status" aria-live="polite"></p>
           </form>
   </dialog>
-  <script src="./app.js?v=31" defer></script>
+  <script src="./app.js?v=34" defer></script>
+  <script src="./clue_chat.js?v=3" defer></script>
 </body>
 </html>
