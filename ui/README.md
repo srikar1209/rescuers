@@ -1,0 +1,84 @@
+# Amherst map UI
+
+The local UI runs a fictional dementia search case on the committed Amherst terrain grid. It serves a 2D map, runs 5,000 simulated walkers, and updates their weights when you accept clues. The results are model estimates, not validated search predictions.
+
+## Start the UI
+
+From the repository root, use Python 3.12 or another supported Python 3 version:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install numpy Pillow
+python ui/serve.py --port 8002
+```
+
+Open `http://127.0.0.1:8002/` in your browser. Keep the terminal open. Press Ctrl+C to stop the server. If port 8002 is occupied, pass a different `--port` and open that URL. The server binds to `127.0.0.1` and stores runs only in memory; restarting it clears them.
+
+The UI needs the tracked `data/grid.npz` and `data/calibrated_params.json`. You do **not** need the raw TIFFs or data-download scripts to run it. SciPy is optional for this UI path; the simulator has a NumPy fallback for its drainage calculation. Rebuilding the grid requires the packages in `environment.yml` and the source files described in [`data/README.md`](../data/README.md).
+
+## Try the fictional demo
+
+1. Click **Demo** in the top bar. It fills Walter's fictional case and starts the walkers.
+2. Wait for **Search priorities** and the yellow-to-red heatmap to appear. Red is higher relative concentration; the soft red patches are sampled simulated positions, not sightings. Hide the patches with **Simulated positions** to inspect the heatmap alone.
+3. Add the demo clues in order from the results panel. Each accepted clue reweights the original 5,000 paths and updates the map.
+4. After all three clues, use **Reveal fictional outcome**. That outcome is kept out of simulation and clue weighting.
+
+The top three priority areas are display groupings around strong heatmap peaks, not exact person locations or guaranteed search boundaries. They appear on the map only when zoomed in; the cards remain in the results panel. Click a card for its approximate center, coordinates, and any nearby named OpenStreetMap feature. A nearby name does not identify the exact site.
+
+## Enter a case
+
+1. Enter **Last seen** and **Estimate as of** in local Amherst time, no more than four hours apart.
+2. Click **Set last-seen point on map**, then click a point inside the Amherst study area. Latitude, longitude, and an editable place description fill in. You can also type coordinates.
+3. Optionally choose a departure direction and pin a possible goal. A goal name without a pin is context only. Age and condition are recorded as context and do not change the walker rules.
+4. Click **Run 5,000 walkers**. The map focuses on the last-seen point and then the probability estimate. A run may take a little while. Changing starting inputs requires another run.
+
+Use **Case details** to reopen the form after a run. Drag to pan, scroll or use `+`/`−` to zoom, and use **Focus estimate** to return to the probability area. The collapsed **Location estimate** control at the bottom opens a time slider. It changes the displayed minute within the run; it does not rerun walkers.
+
+## Add and revise clues
+
+Open **Clues + LLM** in the top bar, or **Add a clue** in the case panel. Choose a **Sighting**, **Camera showed no match**, or **Area searched, no find**. Pin the location on the map or enter coordinates, then fill in the relevant time and uncertainty or detection assumptions. Review the fields and click **Accept and update map**. A new clue focuses the map on its pin; use **Focus estimate** to return to the wider heatmap. Accepted clues can be edited or removed from the case panel, which recomputes weights from the full accepted set. **Keep as note** records text locally without changing the map.
+
+Clues must fall between last seen and estimate-as-of. Witness reliability, camera miss rate, search detection, location error, and search radius are explicit user estimates. They are not measured by the app. The app does not set path weights to zero. **Effective walkers** in **Model details** indicates when the remaining weights depend heavily on a small number of paths. Reported walking direction in a free-text sighting is retained as a note; this version weighs its location and time.
+
+### Optional AI extraction
+
+Manual clues work without an API key. To turn free text into a **draft** for review, set a Gemini key in the same terminal before starting the server. For zsh, this prompt avoids putting the key in shell history:
+
+```bash
+read -rs "GEMINI_API_KEY?Gemini API key: "; echo
+export GEMINI_API_KEY
+python ui/serve.py --port 8002
+```
+
+`GEMINI_MODEL` overrides the default `gemini-3.5-flash-lite`. Existing `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` settings provide an alternative when Gemini is not configured. Never commit keys. Click **Extract clue details with AI**, review the draft, complete any missing coordinates, times, or radius, and then click **Accept and update map**. Extraction alone does not update probabilities. The extractor does not geocode place names.
+
+## What the code does
+
+| File | Role |
+| --- | --- |
+| `index.html`, `styles.css` | Case form, map layout, clue dialog, light and dark appearance |
+| `app.js` | Browser state, map drawing, heatmap overlay, pins, evidence controls |
+| `serve.py` | Local HTTP server, terrain and probability tiles, API routes, nearby OSM name lookup |
+| `model_service.py` | Run lifecycle, case validation, simulator and inference calls, priority-area summaries, optional LLM extraction |
+| `../rescuers/sim.py` | Walker simulation with calibrated parameters |
+| `../rescuers/infer.py` | Clue likelihoods and walker weight updates |
+| `../data/grid.npz` | Committed 10 m Amherst model grid |
+
+The simulation uses `spotting=False` while a case is open. At the estimate-as-of time, the traffic-based “still missing” likelihood sets initial weights. Accepted clues then reweight those paths; deleting a clue recomputes from the initial weights. Map blur and priority-area circles are presentation choices and do not change the underlying weights. The proposed next-best-check suggestion is not implemented.
+
+## Map data and external services
+
+The grid derives from USGS 3DEP elevation, NLCD 2021 land cover, and OpenStreetMap features. See [`data/README.md`](../data/README.md) for the full provenance. The browser requests OpenStreetMap street tiles for the visible view, with attribution. If street tiles fail, the local terrain view remains. A clicked area can request nearby OSM names from Overpass; if that lookup fails, use the coordinates shown in the UI. The optional AI extraction needs its provider API to be reachable. The base simulation and manual clues do not need those external services.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `Address already in use` | Choose another port, such as `--port 8765`, and open `http://127.0.0.1:8765/`. |
+| `ModuleNotFoundError: numpy` or `PIL` | Activate the environment used to start the server and run `python -m pip install numpy Pillow`. |
+| Grid missing or simulation fails immediately | Confirm `data/grid.npz` and `data/calibrated_params.json` exist in the repository. Start from the repository root. |
+| Heatmap absent after clicking Run | Wait for the run status; then check the terminal and browser console for an API error. Confirm `/api/health` reports `"grid": true`. |
+| AI extraction unavailable | Configure a provider key, restart the server from that terminal, and keep using manual clue entry if the provider is unreachable. |
+
+The map is a research prototype for fictional cases. Its probabilities have not been validated for operational search decisions.

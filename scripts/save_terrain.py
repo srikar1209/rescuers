@@ -6,14 +6,17 @@
 import geopandas as gpd
 import py3dep
 import pygeohydro as gh
+from pathlib import Path
 
-area = gpd.read_file("amherst_area_buffered.geojson").to_crs(4326)
+DATA = Path(__file__).resolve().parent.parent / "data"
+
+area = gpd.read_file(DATA / "amherst_area_buffered.geojson").to_crs(4326)
 geom = area.geometry.iloc[0]
 
 # 1. Elevation, 10 m cells (for downhill rule and finding drainages)
 print("Downloading elevation (10 m)...")
 dem = py3dep.get_dem(geom, resolution=10, crs=4326)
-dem.rio.to_raster("amherst_elevation_10m.tif")
+dem.rio.to_raster(DATA / "amherst_elevation_10m.tif")
 print(f"Saved amherst_elevation_10m.tif  shape={dem.shape}  "
       f"min={float(dem.min()):.0f} m  max={float(dem.max()):.0f} m")
 
@@ -21,7 +24,7 @@ print(f"Saved amherst_elevation_10m.tif  shape={dem.shape}  "
 print("Downloading NLCD land cover (30 m)...")
 lc = gh.nlcd_bygeom(area, resolution=30, years={"cover": [2021]})
 cover = lc[list(lc.keys())[0]]["cover_2021"]
-cover.rio.to_raster("amherst_landcover_2021.tif")
+cover.rio.to_raster(DATA / "amherst_landcover_2021.tif")
 print("Saved amherst_landcover_2021.tif")
 
 # Show what land cover classes are in the area

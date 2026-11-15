@@ -17,7 +17,6 @@ because witnesses and cameras make mistakes.
 import json
 from dataclasses import dataclass
 import numpy as np
-from scipy.ndimage import gaussian_filter
 
 from rescuers import grid as G
 from rescuers import sim
@@ -36,7 +35,7 @@ class ClueParams:
 def to_minute(hhmm, start_hhmm):
     h, m = map(int, hhmm.split(":"))
     h0, m0 = map(int, start_hhmm.split(":"))
-    return (h * 60 + m) - (h0 * 60 + m0)
+    return ((h * 60 + m) - (h0 * 60 + m0)) % (24 * 60)
 
 
 def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
@@ -50,22 +49,28 @@ def clue_likelihood(grid, walks, clue, start_hhmm, cp=None):
 
     if clue["type"] == "sighting":
         t = to_minute(clue["time"], start_hhmm)
+        if not 0 <= t <= T:
+            raise ValueError('Sighting is outside the simulation window')
         lo, hi = int(max(0, t - cp.sighting_window_min)), int(min(T, t + cp.sighting_window_min))
         seg = pos[:, lo:hi + 1]
         d = np.hypot(seg[..., 0] - r, seg[..., 1] - c).min(1) * cell
         return cp.reliability * np.exp(-d ** 2 / (2 * cp.sighting_err_m ** 2)) + (1 - cp.reliability) * 0.05
 
     if clue["type"] == "camera_negative":
-        lo, hi = [int(np.clip(to_minute(x, start_hhmm), 0, T)) for x in clue["window"]]
+        lo, hi = [to_minute(x, start_hhmm) for x in clue["window"]]
+        if not 0 <= lo <= hi <= T:
+            raise ValueError('Camera window is outside the simulation window')
         seg = pos[:, lo:hi + 1]
         d = np.hypot(seg[..., 0] - r, seg[..., 1] - c).min(1) * cell
-        return np.where(d <= cp.camera_range_m, cp.camera_miss, 1.0)
+        return np.where(d <= clue.get('range_m', cp.camera_range_m), clue.get('miss_rate', cp.camera_miss), 1.0)
 
     if clue["type"] == "area_searched":
         t = clue.get("time")
-        m = T if t is None else int(np.clip(to_minute(t, start_hhmm), 0, T))
+        m = T if t is None else to_minute(t, start_hhmm)
+        if not 0 <= m <= T:
+            raise ValueError('Search completion is outside the simulation window')
         d = np.hypot(pos[:, m, 0] - r, pos[:, m, 1] - c) * cell
-        return np.where(d <= clue.get("radius_m", 150), 1 - cp.pod, 1.0)
+        return np.where(d <= clue.get("radius_m", 150), 1 - clue.get('pod', cp.pod), 1.0)
 
     if clue["type"] == "not_reported":
         t = clue.get("time")
@@ -111,13 +116,22 @@ def heatmap(grid, walks, w, minute=None, smooth_cells=2.0):
     m = walks.minutes if minute is None else minute
     rr = np.clip(np.rint(walks.pos[:, m, 0]).astype(int), 0, H - 1)
     cc = np.clip(np.rint(walks.pos[:, m, 1]).astype(int), 0, W - 1)
-    heat = np.zeros((H, W))
+    heat = np.zeros((H, W), dtype=np.float32)
     np.add.at(heat, (rr, cc), w)
-    heat = gaussian_filter(heat, smooth_cells)
+    if smooth_cells > 0:
+        radius = max(1, int(np.ceil(3 * smooth_cells)))
+        axis = np.arange(-radius, radius + 1)
+        kernel = np.exp(-0.5 * (axis / smooth_cells) ** 2)
+        kernel /= kernel.sum()
+        padded = np.pad(heat, ((radius, radius), (0, 0)), mode='reflect')
+        heat = sum(kernel[i] * padded[i:i + H] for i in range(len(kernel)))
+        padded = np.pad(heat, ((0, 0), (radius, radius)), mode='reflect')
+        heat = sum(kernel[i] * padded[:, i:i + W] for i in range(len(kernel)))
     heat[grid["cls"] == G.OUTSIDE] = 0
-    blocked = np.isin(grid["cls"], [G.BUILDING, G.BARRIER])
-    heat[blocked] = 0
-    return heat / heat.sum()
+    total = heat.sum()
+    if total <= 0:
+        raise ValueError('No walker probability remains within the Amherst grid')
+    return heat / total
 
 
 def truth_rank(grid, heat, truth_rc, radius_cells=3):

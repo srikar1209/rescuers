@@ -3,7 +3,11 @@
 # Takes a few minutes. If the server is busy, it waits and retries on its own.
 
 import time
+from pathlib import Path
 import osmnx as ox
+
+DATA = Path(__file__).resolve().parent.parent / "data"
+DATA.mkdir(exist_ok=True)
 
 ox.settings.timeout = 300           # give the server more time for a big area
 ox.settings.requests_timeout = 300
@@ -43,8 +47,8 @@ utm = boundary.estimate_utm_crs()
 area = boundary.to_crs(utm).buffer(BUFFER_M).to_crs(4326)
 area_gdf = boundary.copy()
 area_gdf["geometry"] = area.values
-boundary.to_file("amherst_boundary.geojson", driver="GeoJSON")
-area_gdf.to_file("amherst_area_buffered.geojson", driver="GeoJSON")
+boundary.to_file(DATA / "amherst_boundary.geojson", driver="GeoJSON")
+area_gdf.to_file(DATA / "amherst_area_buffered.geojson", driver="GeoJSON")
 area_km2 = area.to_crs(utm).area.iloc[0] / 1e6
 print(f"Study area: Amherst + {BUFFER_M/1000:.0f} km buffer = {area_km2:.0f} km2")
 
@@ -59,7 +63,7 @@ gdf = gdf[keep + ["geometry"]].reset_index(drop=True)
 for c in keep:
     gdf[c] = gdf[c].astype(str)
 
-gdf.to_file("amherst_full_features.geojson", driver="GeoJSON")
+gdf.to_file(DATA / "amherst_full_features.geojson", driver="GeoJSON")
 print(f"Saved {len(gdf)} features to amherst_full_features.geojson")
 for c in keep:
     if c != "name":
@@ -69,7 +73,7 @@ for c in keep:
 print("Downloading walking network (optional)...")
 try:
     G = with_retry(lambda: ox.graph_from_polygon(polygon, network_type="walk"), "walk network", tries=3)
-    ox.save_graphml(G, "amherst_full_walk.graphml")
+    ox.save_graphml(G, DATA / "amherst_full_walk.graphml")
     print("Saved walking network to amherst_full_walk.graphml")
 except Exception as e:
     print(f"Skipped walking network ({type(e).__name__}). Not needed for the grid model.")

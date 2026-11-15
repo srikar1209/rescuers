@@ -19,13 +19,6 @@ Layers in the grid (one value per 10 m cell):
 
 import json
 import numpy as np
-import geopandas as gpd
-import rasterio
-from rasterio import features
-from rasterio.transform import from_origin, rowcol
-from rasterio.warp import reproject, Resampling
-from scipy import ndimage
-from pyproj import Transformer
 
 D = "data/"
 CELL = 10  # meters
@@ -94,6 +87,7 @@ def _tag(gdf, col, values=None):
 
 def _burn(geoms, shape, transform, all_touched=False):
     """Boolean mask of cells covered by the geometries."""
+    from rasterio import features
     geoms = [g for g in geoms if g is not None and not g.is_empty]
     if not geoms:
         return np.zeros(shape, bool)
@@ -102,6 +96,8 @@ def _burn(geoms, shape, transform, all_touched=False):
 
 
 def _reproject(path, shape, transform, crs, resampling, dtype, nodata):
+    import rasterio
+    from rasterio.warp import reproject
     out = np.full(shape, nodata, dtype=dtype)
     with rasterio.open(path) as src:
         reproject(rasterio.band(src, 1), out, dst_transform=transform, dst_crs=crs,
@@ -111,6 +107,10 @@ def _reproject(path, shape, transform, crs, resampling, dtype, nodata):
 
 # ---------------- build ----------------
 def build(save=True, preview=True):
+    import geopandas as gpd
+    from rasterio.transform import from_origin
+    from rasterio.warp import Resampling
+    from scipy import ndimage
     area = gpd.read_file(D + "amherst_area_buffered.geojson")
     crs = area.estimate_utm_crs()
     area = area.to_crs(crs)
@@ -207,6 +207,7 @@ def build(save=True, preview=True):
 
 def add_traffic(grid, save=True):
     """Add the 'traffic' layer to an existing grid (does not change any other layer)."""
+    import geopandas as gpd
     from affine import Affine
     transform = Affine(*grid["transform"])
     shape = grid["cls"].shape
@@ -246,20 +247,58 @@ def load(path=D + "grid.npz"):
 
 def latlon_to_cell(grid, lat, lon):
     """(lat, lon) -> (row, col) in the grid."""
-    t = Transformer.from_crs(4326, grid["crs"], always_xy=True)
-    x, y = t.transform(lon, lat)
-    r, c = rowcol(rasterio.Affine(*grid["transform"]), x, y)
-    return int(r), int(c)
+    x, y = _utm18(lon, lat)
+    a, b, ox, d, e, oy = grid["transform"]
+    return int(np.floor((y - oy) / e)), int(np.floor((x - ox) / a))
 
 
 def cell_to_latlon(grid, row, col):
     """(row, col) -> (lat, lon) of the cell center. Works on arrays too."""
-    a = rasterio.Affine(*grid["transform"])
-    x = a.c + (np.asarray(col) + 0.5) * a.a
-    y = a.f + (np.asarray(row) + 0.5) * a.e
-    t = Transformer.from_crs(grid["crs"], 4326, always_xy=True)
-    lon, lat = t.transform(x, y)
-    return lat, lon
+    a, b, ox, d, e, oy = grid["transform"]
+    x = ox + (np.asarray(col) + 0.5) * a
+    y = oy + (np.asarray(row) + 0.5) * e
+    return _utm18_inverse(x, y)
+
+
+def _utm18(lon, lat):
+    """WGS84 to UTM zone 18N, used by the committed Amherst grid."""
+    a, e2, k0 = 6378137.0, 0.0066943799901413165, 0.9996
+    ep2 = e2 / (1 - e2)
+    phi, lam = np.radians(lat), np.radians(np.asarray(lon) + 75)
+    sin, cos, tan = np.sin(phi), np.cos(phi), np.tan(phi)
+    n = a / np.sqrt(1 - e2 * sin * sin)
+    t, c, aa = tan * tan, ep2 * cos * cos, cos * lam
+    m = a * ((1 - e2 / 4 - 3 * e2**2 / 64 - 5 * e2**3 / 256) * phi
+             - (3 * e2 / 8 + 3 * e2**2 / 32 + 45 * e2**3 / 1024) * np.sin(2 * phi)
+             + (15 * e2**2 / 256 + 45 * e2**3 / 1024) * np.sin(4 * phi)
+             - (35 * e2**3 / 3072) * np.sin(6 * phi))
+    x = 500000 + k0 * n * (aa + (1 - t + c) * aa**3 / 6
+                            + (5 - 18 * t + t**2 + 72 * c - 58 * ep2) * aa**5 / 120)
+    y = k0 * (m + n * tan * (aa**2 / 2 + (5 - t + 9 * c + 4 * c**2) * aa**4 / 24
+                             + (61 - 58 * t + t**2 + 600 * c - 330 * ep2) * aa**6 / 720))
+    return x, y
+
+
+def _utm18_inverse(x, y):
+    """UTM zone 18N to WGS84 (Snyder series; sub-meter at Amherst)."""
+    a, e2, k0 = 6378137.0, 0.0066943799901413165, 0.9996
+    ep2 = e2 / (1 - e2)
+    m = np.asarray(y) / k0
+    mu = m / (a * (1 - e2 / 4 - 3 * e2**2 / 64 - 5 * e2**3 / 256))
+    e1 = (1 - np.sqrt(1 - e2)) / (1 + np.sqrt(1 - e2))
+    phi = (mu + (3 * e1 / 2 - 27 * e1**3 / 32) * np.sin(2 * mu)
+           + (21 * e1**2 / 16 - 55 * e1**4 / 32) * np.sin(4 * mu)
+           + 151 * e1**3 / 96 * np.sin(6 * mu) + 1097 * e1**4 / 512 * np.sin(8 * mu))
+    s, c, t = np.sin(phi), np.cos(phi), np.tan(phi)
+    n = a / np.sqrt(1 - e2 * s * s)
+    r = a * (1 - e2) / (1 - e2 * s * s)**1.5
+    cc, tt = ep2 * c * c, t * t
+    dd = (np.asarray(x) - 500000) / (n * k0)
+    lat = phi - n * t / r * (dd**2 / 2 - (5 + 3 * tt + 10 * cc - 4 * cc**2 - 9 * ep2) * dd**4 / 24
+                           + (61 + 90 * tt + 298 * cc + 45 * tt**2 - 252 * ep2 - 3 * cc**2) * dd**6 / 720)
+    lon = np.radians(-75) + (dd - (1 + 2 * tt + cc) * dd**3 / 6
+                             + (5 - 2 * cc + 28 * tt - 3 * cc**2 + 8 * ep2 + 24 * tt**2) * dd**5 / 120) / c
+    return np.degrees(lat), np.degrees(lon)
 
 
 # ---------------- checks ----------------

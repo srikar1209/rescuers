@@ -106,9 +106,25 @@ def traffic_layer(grid):
 def drainage_mask(grid, drain_tpi):
     """True where a cell counts as drainage. The near-stream part is computed once per grid."""
     if "near_stream" not in grid:
-        from scipy import ndimage
-        d = ndimage.distance_transform_edt(~np.isin(grid["cls"], [G.STREAM, G.WATER])) * float(grid["cell"])
-        grid["near_stream"] = d <= DRAIN_STREAM_M
+        source = np.isin(grid["cls"], [G.STREAM, G.WATER])
+        radius = DRAIN_STREAM_M / float(grid["cell"])
+        try:
+            from scipy import ndimage
+            grid["near_stream"] = ndimage.distance_transform_edt(~source) <= radius
+        except ImportError:
+            # Exact disk dilation at the grid's cell resolution for UI environments
+            # that have NumPy but not the GIS/calibration environment's SciPy.
+            h, w = source.shape
+            near = np.zeros_like(source)
+            edge = int(np.floor(radius))
+            for dr in range(-edge, edge + 1):
+                for dc in range(-edge, edge + 1):
+                    if dr * dr + dc * dc > radius * radius:
+                        continue
+                    r0, r1 = max(0, -dr), min(h, h - dr)
+                    c0, c1 = max(0, -dc), min(w, w - dc)
+                    near[r0:r1, c0:c1] |= source[r0 + dr:r1 + dr, c0 + dc:c1 + dc]
+            grid["near_stream"] = near
     return (grid["tpi"] < drain_tpi) & grid["near_stream"]
 
 
