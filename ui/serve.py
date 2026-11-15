@@ -362,7 +362,7 @@ class Handler(SimpleHTTPRequestHandler):
             strength = np.sqrt(np.clip(heat / reference, 0, 1))
             field = Image.fromarray(np.uint8(np.round(strength * 255)), 'L')
             display[key] = np.asarray(field.filter(ImageFilter.GaussianBlur(radius=8))).copy()
-            if len(display) > 8:
+            if len(display) > 2:
                 display.pop(next(iter(display)))
         intensity = np.where(valid & (cls[rr, cc] != 255), display[key][rr, cc] / 255, 0)
         rgba = np.zeros((256, 256, 4), dtype=np.uint8)

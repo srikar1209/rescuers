@@ -22,6 +22,7 @@ EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='amherst-walkers
 RUNS = {}
 LOCK = threading.RLock()
 HORIZON = 240
+MAX_RUNS = 3  # Bound stored walk paths and heatmaps on a small demo instance.
 
 
 @lru_cache(maxsize=1)
@@ -131,6 +132,12 @@ def start_run(case):
            'walks': None, 'weights': None, 'baseline_weights': None,
            'evidence': [], 'heat_cache': {}, 'error': None}
     with LOCK:
+        if len(RUNS) >= MAX_RUNS:
+            oldest_finished = next((id for id, old in RUNS.items()
+                                    if old['status'] != 'running'), None)
+            if oldest_finished is None:
+                raise RuntimeError('Simulations are busy; try again shortly')
+            del RUNS[oldest_finished]
         RUNS[run_id] = run
 
     def work():
@@ -211,8 +218,12 @@ def run_heat(run, minute):
     with LOCK:
         key = (run['version'], minute)
         if key not in run['heat_cache']:
-            run['heat_cache'][key] = infer.heatmap(model_grid(), run['walks'], run['weights'], minute)
-            if len(run['heat_cache']) > 8:
+            # The inference calculation uses its original precision. Store the
+            # finished display field compactly so the free web instance can
+            # serve map tiles without retaining several large float64 grids.
+            run['heat_cache'][key] = infer.heatmap(
+                model_grid(), run['walks'], run['weights'], minute).astype(np.float32)
+            if len(run['heat_cache']) > 2:
                 run['heat_cache'].pop(next(iter(run['heat_cache'])))
         return run['heat_cache'][key]
 
@@ -356,19 +367,23 @@ def summary(run, minute):
         weights = run['weights'].copy()
         version = run['version']
     g = model_grid()
-    active = np.flatnonzero(heat > 0)
-    values = heat.flat[active]
-    order = np.argsort(values)[::-1]
-    ranked = active[order]
-    cumulative = np.cumsum(values[order])
+    # Sort only heat values for the 80% area. Sorting full cell indices and
+    # distances used hundreds of MiB for a 2080 x 1310 grid.
+    values = np.sort(heat.ravel())[::-1]
+    cumulative = np.cumsum(values, dtype=np.float64)
     count80 = int(np.searchsorted(cumulative, 0.8) + 1)
-    peak_row, peak_col = np.unravel_index(ranked[0], heat.shape)
-    rows, cols = np.unravel_index(active, heat.shape)
-    distances = np.hypot(rows - peak_row, cols - peak_col) * float(g['cell'])
-    radial_order = np.argsort(distances)
-    radial_mass = np.cumsum(values[radial_order])
-    radius80 = float(distances[radial_order[min(len(radial_order) - 1,
-        int(np.searchsorted(radial_mass, 0.8)))]] + float(g['cell']) / 2)
+    del values, cumulative
+    peak_row, peak_col = np.unravel_index(np.argmax(heat), heat.shape)
+    # Group radial distance to the nearest tenth of a grid cell. This is a
+    # display circle; the underlying heat values and area ranking stay intact.
+    height, width = heat.shape
+    columns = np.arange(width, dtype=np.float32) - peak_col
+    bins = int(np.ceil(np.hypot(height, width) * 10)) + 1
+    radial_mass = np.zeros(bins, dtype=np.float64)
+    for row in range(height):
+        distances = np.rint(np.hypot(row - peak_row, columns) * 10).astype(np.int32)
+        radial_mass += np.bincount(distances, weights=heat[row], minlength=bins)
+    radius80 = (np.searchsorted(np.cumsum(radial_mass), 0.8) / 10 + 0.5) * float(g['cell'])
     circle_lat, circle_lon = G.cell_to_latlon(g, peak_row, peak_col)
     areas = search_areas(heat, g)
     return {'minute': int(minute), 'version': version, 'ess': float(infer.ess(weights)),

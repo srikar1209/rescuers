@@ -589,8 +589,12 @@ $('walkerDotsToggle').addEventListener('click', () => {
 new ResizeObserver(requestDraw).observe(canvas);
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
-  const data = await response.json();
+  const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options}).catch(() => {
+    throw new Error('The server connection was interrupted. Refresh the page and run the walkers again.');
+  });
+  const data = await response.json().catch(() => {
+    throw new Error('The server connection was interrupted. Refresh the page and run the walkers again.');
+  });
   if (!response.ok) throw new Error(data.error || 'Request failed');
   return data;
 }

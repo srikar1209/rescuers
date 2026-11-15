@@ -15,6 +15,8 @@ python ui/serve.py --port 8002
 
 Open `http://127.0.0.1:8002/` in your browser. Keep the terminal open. Press Ctrl+C to stop the server. If port 8002 is occupied, pass a different `--port` and open that URL. The server binds to `127.0.0.1` and stores runs only in memory; restarting it clears them.
 
+The hosted demo retains at most three recent simulation runs to limit memory use. Starting a fourth run discards the oldest finished run; reopen the case and run it again if a previous run is no longer available.
+
 The UI needs the tracked `data/grid.npz` and `data/calibrated_params.json`. You do **not** need the raw TIFFs or data-download scripts to run it. SciPy is optional for this UI path; the simulator has a NumPy fallback for its drainage calculation. Rebuilding the grid requires the packages in `environment.yml` and the source files described in [`data/README.md`](../data/README.md).
 
 ## Try the fictional demo
